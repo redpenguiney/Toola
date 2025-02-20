@@ -1,0 +1,29 @@
+--comment
+
+class A
+	I32 a
+	String b
+end
+
+
+--I32: 32 bit signed int
+--I32&: reference to ^
+--I32&&: reference to ^
+--all types passed by value
+
+function(I32) Joe(A& obj, String str)
+	if true then
+	
+	else
+		
+	end
+
+	while true do
+
+	end
+
+
+
+	return 5
+end
+
