@@ -1,29 +1,34 @@
---comment
+// comment
 
-class A
-	I32 a
-	String b
-end
+class A {
+	i32 a
+	string b;
+	string&& c
+}
 
 
---I32: 32 bit signed int
---I32&: reference to ^
---I32&&: reference to ^
---all types passed by value
+//I32: 32 bit signed int
+//I32&: reference to ^
+//I32&&: reference to ^
+//all types passed by value
 
-function(I32) Joe(A& obj, String str)
-	if true then
+function(i32) Joe(A& obj, String str) {
+	if true {
+	}
+	else {
 	
-	else
-		
-	end
+	}	
+	;
+	while true {
+	
+	}
 
-	while true do
-
-	end
+	for(i32 i = 0; i < 1; i++)
 
 
+	i32 a = (3 +obj.b[3.073]-124 %= 3)
+	a *= 2 -3;
 
 	return 5
-end
+}
 
