@@ -27,10 +27,13 @@ class A {
 	
 	}
 
-	for (i32 die = 0 false die++) {
+	for (i32 die = 0, false, die += 1) {
 	
 	}
 
+	//for (i32 dier = 1, dier > -4, dier -= 1) {
+	
+	//}
 
 	i32 a = (3 +obj.b[3.073]-124 %= 3)
 	a *= 2 -3;

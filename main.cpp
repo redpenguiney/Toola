@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <functional>
 #include <regex>
+#include <variant>
 
 // lexer?
 struct tokenizer_context {
@@ -409,12 +410,16 @@ std::string get_next_token(std::string& src, tokenizer_context& context, parser_
 		escape_next_char = false;
 	}
 
-	std::cout << "|" << token;
+	//std::cout << "|" << token;
 	/*if (token == "class") {
 		std::cout << "";
 	}*/
 
 	return token;
+}
+
+bool is_reserved(std::string str) {
+	return str == "class" || str == "function" || str == "for" || str == "while";
 }
 
 class expression {
@@ -433,6 +438,12 @@ bool equivalent_grouping(std::string a, std::string b) {
 	if (a == "}") return b == "{";
 	assert(false);
 }
+
+struct variable_assignment {
+	std::string type_name;
+	std::string var_name;
+	std::pair<std::string, expression> expr;
+};
 
 int main(const char** args, int nargs) {
 	tokenizer_context tokenizer;
@@ -460,14 +471,45 @@ int main(const char** args, int nargs) {
 			auto token = get_next_token(src, tokenizer, parser);
 			if (token == "") 
 				throw std::runtime_error("unexpected eof");
-			if (token != " " && token != "\t" && token != "\n")
+			if (token != " " && token != "\t" && token != "\n") {
+				std::cout << "Token \"" + token + "\"\n";
+				if (token == "for") {
+					std::cout << "";
+				}
 				return token;
+			}
+			
+		}
+	};
+
+	auto get_expression_or_variable_assignment = [&]() mutable -> std::variant<std::pair<std::string, expression>, variable_assignment> {
+		std::string current_token = get_next_non_empty_token();
+		if (parser.is_type(current_token)) { // then we're defining a variable now.
+
+			std::string var_name = get_next_non_empty_token();
+			if (var_name.empty() || !parser.is_valid_symbol_name(var_name))
+				throw std::runtime_error("invalid variable name");
+
+			if (get_next_non_empty_token() != "=")
+				throw std::runtime_error("expected \"=\" when defining variable");
+
+			auto assignment = get_next_expression();
+
+			return variable_assignment{
+				current_token,
+				var_name,
+				assignment
+			};
+		}
+		else {
+			return_token(src, current_token);
+			return get_next_expression();
 		}
 	};
 
 	//try {
 		std::string current_token;
-		while ((current_token = get_next_token(src, tokenizer, parser)) != "") {
+		while ((current_token = get_next_non_empty_token()) != "") {
 			assert(!parser.taskStack.empty());
 
 			//continue;
@@ -534,6 +576,7 @@ int main(const char** args, int nargs) {
 					}
 					else if (parser.is_variable(next) || parser.is_literal(next)) {
 						if (last.back() == 1) throw std::runtime_error("symbol cannot follow another symbol");
+						if (is_reserved(next)) throw std::runtime_error("\"" + next + "\" is invalid in this context");
 						unary.back() = false;
 						last.back() = 1;
 						exp += next;
@@ -582,14 +625,20 @@ int main(const char** args, int nargs) {
 					parser.scopeStack.push_back(scope{ .known_symbols = {}, .type = scope_type::while_ });
 				}
 				else if (current_token == "for") {
+					std::cout << "Parsing for loop.\n";
+
 					if (get_next_non_empty_token() != "(")
 						throw std::runtime_error("expected \"(\" before for loop header");
 
 					parser.taskStack.push_back(parsing_task_info{ parsing_task::code_body, -1 }); // make sure for loop's defined variable is part of this scope, not the outer scope
 					parser.scopeStack.push_back(scope{ .known_symbols = {}, .type = scope_type::for_ });
 
-					auto loop_initial = get_next_expression();
+					auto loop_initial = get_expression_or_variable_assignment();
+					if (get_next_non_empty_token() != ",")
+						throw std::runtime_error("expected \",\" between for loop header initial expression and conditional expression");
 					auto loop_condition = get_next_expression();
+					if (get_next_non_empty_token() != ",")
+						throw std::runtime_error("expected \",\" between for loop header conditional expression and iteration expression");
 					auto loop_increment = get_next_expression();
 
 					if (get_next_non_empty_token() != ")")
@@ -608,7 +657,7 @@ int main(const char** args, int nargs) {
 					auto if_condition = get_next_expression();
 					// TODO: ASSERT CONVERTIBILITY TO BOOLEAN
 
-					
+
 
 					if (get_next_non_empty_token() != ")")
 						throw std::runtime_error("expected \")\" to close if condition");
@@ -619,17 +668,6 @@ int main(const char** args, int nargs) {
 
 					parser.taskStack.push_back(parsing_task_info{ parsing_task::code_body, -1 });
 					parser.scopeStack.push_back(scope{ .known_symbols = {}, .type = scope_type::if_ });
-				}
-				else if (parser.is_type(current_token)) { // then we're defining a variable now.
-
-					std::string var_name = get_next_non_empty_token();
-					if (var_name.empty() || !parser.is_valid_symbol_name(var_name))
-						throw std::runtime_error("invalid variable name");
-
-					if (get_next_non_empty_token() != "=")
-						throw std::runtime_error("expected \"=\" when defining variable");
-
-					auto assignment = get_next_expression();
 				}
 				else if (current_token == "}") { // exit code body
 					bool could_have_else = parser.scopeStack.back().type == scope_type::if_;
@@ -659,6 +697,14 @@ int main(const char** args, int nargs) {
 						parser.taskStack.push_back(parsing_task_info{ parsing_task::code_body, -1 });
 						parser.scopeStack.push_back(scope{ .known_symbols = {}, .type = scope_type::if_ });
 					}
+					else {
+						return_token(src, next);
+					}
+				}
+				else if (current_token == ";") {}
+				else {
+					return_token(src, current_token);
+					auto variant = get_expression_or_variable_assignment();
 				}
 			}
 			else if (parser.taskStack.back().task == parsing_task::class_body) {
