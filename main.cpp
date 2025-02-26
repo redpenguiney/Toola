@@ -7,6 +7,7 @@
 #include <functional>
 #include <regex>
 #include <variant>
+#include <optional>
 
 // lexer?
 struct tokenizer_context {
@@ -422,8 +423,24 @@ bool is_reserved(std::string str) {
 	return str == "class" || str == "function" || str == "for" || str == "while";
 }
 
-class expression {
+class expression;
 
+struct literal {};
+struct varname {};
+struct funccall {
+	std::string funcname;
+	std::vector<expression> args;
+};
+
+class expression {
+public:
+	using operand = std::variant<literal, varname, funccall, std::unique_ptr<expression>>;
+
+	operand val1;
+	std::optional<operand> val2;
+	std::optional<operator_> operation; // nullopt if no val2 and no unary operator.
+
+	expression(std::vector<>);
 };
 
 std::function<std::string()> get_next_non_empty_token = nullptr;
