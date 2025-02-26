@@ -5,9 +5,14 @@ class A {
 	string b;
 	string&& c
 
-	//var method1 = function void(A& self, int b) {}
+	var method1 = function void(A& self, i32 b) {}
 
-	//void(A& self, int c) method2 = function void(A& self, int c)
+	void(A&, i32) method2 = function void(A& self, i32 c) {
+	
+	
+		c *= 2
+
+	}
 }
 
 
@@ -16,7 +21,7 @@ class A {
 //i32&&: reference to ^
 //all types passed by value
 
-//var joe = function i32(A& obj, string str) {
+var joe = function i32(A& obj, string str) {
 	if (true) {
 	}
 	else {
@@ -35,9 +40,11 @@ class A {
 	
 	//}
 
-	i32 a = (3 +obj.b[3.073]-124 %= 3)
-	a *= 2 -3;
+	obj.method1(obj, 31)
+
+	i32 a = (3 +obj.b[3.073] - 124 %= 3)
+	a *= 2 - 3;
 
 	return 5
-//}
+}
 
