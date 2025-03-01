@@ -472,13 +472,47 @@ struct funccall {
 
 class expression {
 public:
-	using operand = std::variant<literal, varname, funccall, std::unique_ptr<expression>>;
+	using operand = std::variant<literal, varname, funccall, std::shared_ptr<expression>, operator_>;
 
-	operand val1;
-	std::optional<operand> val2;
-	std::optional<operator_> operation; // nullopt if no val2 and no unary operator.
+	static bool is_mathable(const operand& op) {
+		return std::holds_alternative<literal>(op) ||
+			std::holds_alternative<varname>(op) ||
+			std::holds_alternative<std::shared_ptr<expression>>(op) ||
+			std::holds_alternative<funccall>(op);
+	}
 
-	expression(std::vector<>);
+	std::vector<operand> operands;
+
+	// sort operands into polish postfix notation
+	void shunting_yard() {
+		auto remaining = operands;
+		std::vector<operator_> stack;
+		std::vector<operand> out;
+		std::reverse(remaining.begin(), remaining.end());
+		while (!remaining.empty()) {
+			auto thing = remaining.back();
+			remaining.pop_back();
+
+			if (std::holds_alternative<operator_>(thing)) {
+				operator_ op = std::get<operator_>(thing);
+				if (op.unary) {
+					if (remaining.empty()) throw std::runtime_error("expected symbol after unary");
+					auto next = remaining.back();
+					remaining.pop_back();
+					if (!is_mathable(next)) throw std::runtime_error("expected symbol after unary, not operator");
+					thing = std::shared_ptr<expression>(new expression(std::vector<operand>{op, next}));
+				}
+			}
+
+			if (is_mathable(thing)) 
+			{
+				out.push_back(thing);
+			}
+			else {
+				while ()
+			}
+		}
+	}
 };
 
 static std::string get_next_non_empty_token(bool allowEmpty = false);
