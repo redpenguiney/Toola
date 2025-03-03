@@ -9,6 +9,33 @@
 #include <variant>
 #include <optional>
 
+std::string get_next_assembly_name();
+
+class operand {
+public:
+	// returns the MCASM needed to retrieve the operand's value, and the MCASM symbol name in which that value is stored.
+	virtual std::pair<std::string, std::string> retrieve_asmvar() = 0;
+
+	virtual std::string get_type() = 0;
+};
+
+class varname : public operand {
+public:
+	std::string symname;
+	std::string asmvarname;
+	std::string type;
+
+	varname(std::string avn, std::string type, std::string svn = "COMPILER_TEMPORARY") : symname(svn), type(type), asmvarname(avn) {}
+
+	// effectively returns reference
+	std::pair<std::string, std::string> retrieve_asmvar() override {
+		return std::make_pair("", asmvarname);
+	}
+
+	std::string get_type() { return type; }
+};
+
+
 // lexer?
 struct tokenizer_context {
 	int current_line_number = 1;
@@ -33,8 +60,11 @@ enum class scope_type {
 	function
 };
 
+class varname;
+
 struct scope {
 	std::unordered_map<std::string, symbol_type> known_symbols;
+	std::unordered_map < std::string, std::shared_ptr<varname>> variables = {};
 	scope_type type;
 	bool should_return = false;
 };
@@ -44,38 +74,70 @@ struct parsing_task_info {
 	int line_number = -1;
 };
 
+struct function_info {
+	std::string cumulative_type;
+	std::string ret_typename;
+	std::vector<std::string> arg_typenames;
+	std::string assemblyfuncname = get_next_assembly_name();
+
+	function_info(std::string returntype, std::string totaltype, std::vector<std::string> argtypes, std::string asmname) : 
+		cumulative_type(totaltype), ret_typename(returntype), arg_typenames(argtypes), assemblyfuncname(asmname) 
+	{}
+};
+
 struct parser_context {
 	std::vector<parsing_task_info> taskStack;
 	std::vector<scope> scopeStack;
 
-	bool is_literal(std::string literal) {
+	// returns nullopt if not, otherwise will return "boolean", "string", "null", "double", or "int"
+	std::optional<std::string> is_literal(std::string literal) {
 		// boolean literal
-		if (literal == "true" || literal == "false") return true;
+		if (literal == "true" || literal == "false") return "boolean";
 
 		// null literal
-		if (literal == "null") return true;
+		if (literal == "null") return "null";
 
 		// string literal
-		if (literal.size() >= 2 && literal[0] == '\"' && literal.back() == '\"') return true;
+		if (literal.size() >= 2 && literal[0] == '\"' && literal.back() == '\"') return "string";
 
 		// numeric literal (stolen from https://medium.com/@ryan_forrester_/c-check-if-string-is-number-practical-guide-c7ba6db2febf)
 		static const std::regex number_regex(
 			R"(^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?$)"
 		);
-		return std::regex_match(literal, number_regex);
+		if (std::regex_match(literal, number_regex)) {
+			if (literal.find_first_of(".") != std::string::npos) {
+				return "double";
+			}
+			else {
+				return "int";
+			}
+		}
+		else {
+			return std::nullopt;
+		}
 	}
 
 	bool is_variable(std::string symbol) {
 		for (auto it = scopeStack.rbegin(); it != scopeStack.rend(); it++) {
-			if (it->known_symbols.count(symbol) && it->known_symbols[symbol] == symbol_type::variable) {
+			//if (it->known_symbols.count(symbol) && it->known_symbols[symbol] == symbol_type::variable) {
+			if (it->variables.contains(symbol))
 				return true;
-			}
+			//}
 		}
 		return false;
 	}
 
+	std::shared_ptr<varname> get_variable(std::string varname) {
+		assert(is_variable(varname));
+		for (auto it = scopeStack.rbegin(); it != scopeStack.rend(); it++)
+			//if (it->known_symbols.count(symbol) && it->known_symbols[symbol] == symbol_type::variable) {
+			if (it->variables.contains(varname))
+				return it->variables[varname];
+	}
+
 	bool is_basic_type(std::string symbol) {
-		while (!symbol.empty() && symbol.back() == '&') symbol.pop_back();
+		if (!symbol.empty() && symbol.back() == '&') symbol.pop_back();
+		if (!symbol.empty() && symbol.back() == '&') throw std::runtime_error("cannot have reference to reference");
 		if (symbol == "var") return true;
 		for (auto it = scopeStack.rbegin(); it != scopeStack.rend(); it++) {
 			if (it->known_symbols.count(symbol) && it->known_symbols[symbol] == symbol_type::type) {
@@ -154,7 +216,18 @@ struct parser_context {
 		}
 		return true;
 	}
+
+	std::unordered_map<std::string, std::shared_ptr<function_info>> fmap;
+
+	std::shared_ptr<function_info> get_function_info(std::string asmfuncname) {
+		return fmap.at(asmfuncname);
+	}
 };
+
+tokenizer_context tokenizer;
+parser_context parser;
+std::string src, out;
+
 
 // returns the script backwards.
 std::string get_src(std::string path) {
@@ -203,47 +276,219 @@ enum associativity {
 	right_to_left
 };
 
-struct operator_ {
-	bool unary = false;
+class expression;
+struct binary_operator;
+//using operand = std::variant<literal, varname, funccall, std::shared_ptr<expression>, operator_>;
+
+
+
+static const inline std::string return_asmvar = "ret";
+
+std::string copy(std::string asmdst, std::string asmsrc) {
+	return "\ncvar " + asmsrc + " " + asmdst;
+}
+
+// returns the code to convert the value of the given variable of the given type into the second type, if such a conversion is legal under implicit conditions (between binary operators). 
+std::optional<std::string> implicit_convert_to_type(std::string asm_varname, std::string ti_type, std::string tf_type) {
+	if (ti_type == tf_type) return "";// "\ndvar " + tf_asm_varname + " sym:" + ti_asm_varname;
+	else if (tf_type == "double") {
+		if (ti_type == "int") {
+			return "\ns2d sym:" + asm_varname + " " + asm_varname;
+		}
+		else {
+			return std::nullopt;
+		}
+	}
+	else return std::nullopt;
+}
+
+// returns the code to convert the value of the given variable of the given type into the second type, if such a conversion is legal under explicit conditions. 
+std::optional<std::string> explicit_convert_to_type(std::string asm_varname, std::string ti_type, std::string tf_type) {
+	auto attempt = implicit_convert_to_type(asm_varname, ti_type, tf_type);
+	if (attempt.has_value()) return attempt;
+	else if (tf_type == "int") {
+		if (ti_type == "double") {
+			return "\nd2s sym:" + asm_varname + " " + asm_varname;
+		}
+		else if (ti_type == "boolean") {
+			// boolean is already sint of either 1 or 2, this is easy
+			return "";
+		}
+		else {
+			return std::nullopt;
+		}
+	}
+	else if (tf_type == "double") {
+		if (ti_type == "boolean") {
+			// same as an int cast
+			return "\ns2d sym:" + asm_varname + " " + asm_varname;
+		}
+		else {
+			return std::nullopt;
+		}
+	}
+}
+
+class funccall : public operand {
+public:
+	std::shared_ptr<function_info> function;
+	std::vector<std::shared_ptr<expression>> args;
+	std::pair<std::string, std::string> retrieve_asmvar();
+	std::string get_type() { return function->ret_typename; }
+};
+
+class literal : public operand {
+public:
+	std::string type;
+	std::string value;
+
+	literal(std::string t, std::string v) : type(t), value(v) {};
+
+	std::pair<std::string, std::string> retrieve_asmvar() override {
+		auto literaltype = parser.is_literal(value);
+		assert(literaltype);
+
+		if (literaltype == "null") return std::make_pair("", "sint:0");
+		else if (literaltype == "string") {
+			std::string v = "str:";
+			if (value == "") v += "null";
+			else {
+				std::string litstr = value.substr(1, value.size() - 2);
+				for (char c : litstr) {
+					v += std::to_string((uint8_t)c) + ",";
+				}
+			}
+			v.pop_back();
+			return std::make_pair("", v);
+		}
+		else if (literaltype == "boolean") return std::make_pair("", value == "true" ? "sint:1" : "sint:0");
+		else if (literaltype = "int") return std::make_pair("", "sint:" + value);
+		else if (literaltype = "double") return std::make_pair("", "dbl:" + value);
+		else assert(false);
+	}
+	std::string get_type() { return type; }
+};
+
+
+
+struct binary_operator_result {
+	std::string type = "DNE"; // the type stored in the given variable
+	std::string src = ""; // the MCASM that will store the result of applying this operand on its two arguments
+};
+
+struct binary_operator {
 	associativity a = associativity::left_to_right;
 	int priority = 100; // highest first
+
+	// returns the code needed to store the result of this operation in the given assembly variable name. (the variable being store to must already be declared)
+	std::function<binary_operator_result(std::string, operand&, operand&)> func =
+		[](std::string, operand&, operand&) { assert(false); return binary_operator_result {}; };
 };
 
-std::unordered_map<std::string, operator_> unary_operators{
-	//{"-", operator_ {.unary = true}},
-	{"!", operator_ {.unary = true}}
+struct unary_operator {
+	int priority = 70;
+	std::function < std::string(std::string, operand&)> func = [](std::string, operand&) {assert(false); return ""; };
 };
+
+std::unordered_map<std::string, unary_operator> unary_operators{
+	//{"-", operator_ {.unary = true}},
+	{"!", unary_operator {}}
+};
+
+
+
+// handle4th: if 0 instruction takes 3 args, if 1 we discard 3rd arg and store 4th, if 2 we discard 4th and store 3rd
+std::function < binary_operator_result(std::string, operand&, operand&)> make_math_func(std::string dblinstruction, std::string intinstruction, int handle4th = 0) {
+	return [dblinstruction, intinstruction, handle4th](std::string varname, operand& o1, operand& o2) {
+		std::string out;
+		auto [src1, o1v] = o1.retrieve_asmvar();
+		out += src1;
+		auto [src2, o2v] = o2.retrieve_asmvar();
+		out += src2;
+
+		std::string outtype;
+
+		if (handle4th == 1) varname = "discard_result " + varname;
+		else if (handle4th == 2) varname = varname + " discard_result";
+			
+		if (o1.get_type() == "double" || o2.get_type() == "double") {
+			outtype = "double";
+			if (o1.get_type() != "double") {
+				// copy o1 bc we don't want to change value of o1v.
+				std::string temp = get_next_assembly_name();
+				out += copy(temp, o1v);
+				implicit_convert_to_type(temp, o1.get_type(), "double");
+				o1v = temp;
+			}
+			else if (o2.get_type() != "double") {
+				// copy o2 bc we don't want to change value of o1v.
+				std::string temp = get_next_assembly_name();
+				out += copy(temp, o2v);
+				implicit_convert_to_type(temp, o2.get_type(), "double");
+				o2v = temp;
+			}
+
+
+			out += "\n" + dblinstruction + "sym:" + o1v + " sym:" + o2v + " " + varname;
+		}
+		else if (o1.get_type() == "int" || o2.get_type() == "int") {
+			outtype = "int";
+			if (o1.get_type() != "int") {
+				// copy o1 bc we don't want to change value of o1v.
+				std::string temp = get_next_assembly_name();
+				out += copy(temp, o1v);
+				implicit_convert_to_type(temp, o1.get_type(), "int");
+				o1v = temp;
+			}
+			else if (o2.get_type() != "int") {
+				// copy o2 bc we don't want to change value of o1v.
+				std::string temp = get_next_assembly_name();
+				out += copy(temp, o2v);
+				implicit_convert_to_type(temp, o2.get_type(), "int");
+				o2v = temp;
+			}
+
+			out += "\n" + intinstruction + "sym:" + o1v + " sym:" + o2v + " " + varname;
+		}
+		else {
+			throw std::runtime_error("incompatible operands");
+		}
+		//return "\ndvar " + varname + " "
+
+		return binary_operator_result{ .type = outtype, .src = out };
+	};
+}
 
 // see https://en.cppreference.com/w/cpp/language/operator_precedence
-std::unordered_map<std::string, operator_> binary_operators {
+std::unordered_map<std::string, binary_operator> binary_operators {
 	
-	{".", operator_ {.unary = false, .priority = 80}},
+	{".", binary_operator { .priority = 80}},
 
-	{"*", operator_ {.unary = false, .priority = 70}},
-	{"/", operator_ {.unary = false, .priority = 70}},
-	{"%", operator_ {.unary = false, .priority = 70}},
+	{"*", binary_operator {.priority = 70, .func = make_math_func("dmul", "smul")}},
+	{"/", binary_operator { .priority = 70, .func = make_math_func("dmul", "smul", 2)}},
+	{"%", binary_operator { .priority = 70, .func = make_math_func("dmul", "smul", 1)}},
 	
-	{"+", operator_ {.unary = false, .priority = 60}},
-	{"-", operator_ {.unary = false, .priority = 60}},
+	{"+", binary_operator { .priority = 60, .func = make_math_func("dadd", "sadd")}},
+	{"-", binary_operator { .priority = 60, .func = make_math_func("dsub", "ssub")}},
 
-	{">=", operator_ {.unary = false, .priority = 50}},
-	{"<=", operator_ {.unary = false, .priority = 50}},
-	{"<", operator_ {.unary = false, .priority = 50}},
-	{">", operator_ {.unary = false, .priority = 50}},
+	{">=", binary_operator { .priority = 50, .func = make_math_func("dmul", "smul")}},
+	{"<=", binary_operator { .priority = 50, .func = make_math_func("dmul", "smul")}},
+	{"<", binary_operator { .priority = 50, .func = make_math_func("dmul", "smul")}},
+	{">", binary_operator { .priority = 50, .func = make_math_func("dmul", "smul")}},
 
-	{"==", operator_ {.unary = false, .priority = 40}},
-	{"!=", operator_ {.unary = false, .priority = 40}},
+	{"==", binary_operator { .priority = 40}},
+	{"!=", binary_operator { .priority = 40}},
 
-	{"&&", operator_ {.unary = false, .priority = 30}},
+	{"&&", binary_operator { .priority = 30}},
 
-	{"||", operator_ {.unary = false, .priority = 20}},
+	{"||", binary_operator { .priority = 20}},
 
-	{"=", operator_ {.unary = false, .a = right_to_left, .priority = 10}},
-	{"+=", operator_ {.unary = false, .a = right_to_left, .priority = 10}},
-	{"-=", operator_ {.unary = false, .a = right_to_left, .priority = 10}},
-	{"*=", operator_ {.unary = false, .a = right_to_left, .priority = 10}},
-	{"/=", operator_ {.unary = false, .a = right_to_left, .priority = 10}},
-	{"%=", operator_ {.unary = false, .a = right_to_left, .priority = 10}},
+	{"=", binary_operator { .a = right_to_left, .priority = 10}},
+	{"+=", binary_operator { .a = right_to_left, .priority = 10}},
+	{"-=", binary_operator { .a = right_to_left, .priority = 10}},
+	{"*=", binary_operator { .a = right_to_left, .priority = 10}},
+	{"/=", binary_operator { .a = right_to_left, .priority = 10}},
+	{"%=", binary_operator { .a = right_to_left, .priority = 10}},
 };
 
 //std::unordered_map<std::string, operator_> post_operators{
@@ -252,9 +497,7 @@ std::unordered_map<std::string, operator_> binary_operators {
 //
 //}
 
-tokenizer_context tokenizer;
-parser_context parser;
-std::string src, out;
+
 
 void return_token(std::string token) {
 	// add backwards
@@ -461,63 +704,114 @@ bool is_reserved(std::string str) {
 	return str == "class" || str == "function" || str == "for" || str == "while";
 }
 
-class expression;
+std::unordered_map<std::string, std::string> symbol_to_assembly_names; // key is a function or variable name in user program. value is corresponding name 
+int i = 0;
+std::string get_next_assembly_name() {
+	return "v" + std::to_string(i++);
+}
 
-struct literal {};
-struct varname {};
-struct funccall {
-	std::string funcname;
-	std::vector<expression> args;
-};
-
-class expression {
+class expression: public operand {
 public:
-	using operand = std::variant<literal, varname, funccall, std::shared_ptr<expression>, operator_>;
 
-	static bool is_mathable(const operand& op) {
-		return std::holds_alternative<literal>(op) ||
-			std::holds_alternative<varname>(op) ||
-			std::holds_alternative<std::shared_ptr<expression>>(op) ||
-			std::holds_alternative<funccall>(op);
-	}
+	
 
-	std::vector<operand> operands;
+	using token = std::variant<binary_operator, unary_operator, std::shared_ptr<operand>>;
+	std::vector<token> tokens; 
+	std::string type;
+	bool sorted = false;
+	bool computed_type = false;
 
-	// sort operands into polish postfix notation
+	expression(std::vector<token> t): tokens(t) {}
+
+	// sort operands into polish postfix notation (https://en.wikipedia.org/wiki/Shunting_yard_algorithm)
 	void shunting_yard() {
-		auto remaining = operands;
-		std::vector<operator_> stack;
-		std::vector<operand> out;
+		assert(!sorted);
+		auto remaining = tokens;
+		std::vector<binary_operator> stack;
+		std::vector<token> out;
 		std::reverse(remaining.begin(), remaining.end());
 		while (!remaining.empty()) {
 			auto thing = remaining.back();
 			remaining.pop_back();
 
-			if (std::holds_alternative<operator_>(thing)) {
-				operator_ op = std::get<operator_>(thing);
-				if (op.unary) {
-					if (remaining.empty()) throw std::runtime_error("expected symbol after unary");
-					auto next = remaining.back();
-					remaining.pop_back();
-					if (!is_mathable(next)) throw std::runtime_error("expected symbol after unary, not operator");
-					thing = std::shared_ptr<expression>(new expression(std::vector<operand>{op, next}));
-				}
+			if (std::holds_alternative<unary_operator>(thing)) {
+				unary_operator op = std::get<unary_operator>(thing);
+					
+				if (remaining.empty()) throw std::runtime_error("expected symbol after unary");
+				auto next = remaining.back();
+				remaining.pop_back();
+				if (!std::holds_alternative<std::shared_ptr<operand>>(next)) throw std::runtime_error("expected symbol after unary, not operator");
+				thing = std::shared_ptr<expression>(new expression(std::vector<token>{op, next}));
 			}
 
-			if (is_mathable(thing)) 
+			if (std::holds_alternative<std::shared_ptr<operand>>(thing))
 			{
 				out.push_back(thing);
 			}
 			else {
-				while ()
+				while (!stack.empty()
+					&& (stack.back().priority > std::get<binary_operator>(thing).priority ||
+						(stack.back().priority == std::get<binary_operator>(thing).priority && std::get<binary_operator>(thing).a == associativity::left_to_right))) {
+					auto o = stack.back();
+					stack.pop_back();
+					out.push_back(o);
+				}
+				stack.push_back(std::get<binary_operator>(thing));
 			}
 		}
+
+
+		while (!stack.empty()) {
+			auto o = stack.back();
+			stack.pop_back();
+			out.push_back(o);
+		}
+
+		std::reverse(out.begin(), out.end());
+
+		sorted = true;
+		tokens = out;
+	}
+
+	std::pair<std::string, std::string> retrieve_asmvar() override {
+		assert(sorted);
+		std::string out;
+		std::vector<token> mathables;
+		for (auto& op : tokens) {
+			if (std::holds_alternative<std::shared_ptr<operand>>(op)) {
+				mathables.push_back(op);
+			}
+			else {
+				assert(mathables.size() >= 1);
+				auto o1 = mathables.back();
+				mathables.pop_back();
+				auto o2 = mathables.back();
+				mathables.pop_back();
+				auto tempasmname = get_next_assembly_name();
+				auto subout = std::get<binary_operator>(op).func(tempasmname, *std::get<std::shared_ptr<operand>>(o1), *std::get<std::shared_ptr<operand>>(o2));
+				mathables.push_back(std::shared_ptr<operand>((operand*)(new varname(tempasmname, subout.type))));
+				out += subout.src;
+			}
+		}
+
+		assert(mathables.size() == 1);
+		auto [src, storedpos] = std::get<std::shared_ptr<operand>>(mathables.back())->retrieve_asmvar();
+		out += src;
+
+		type = std::get<std::shared_ptr<operand>>(mathables.back())->get_type();
+		computed_type = true;
+		return std::make_pair(out, storedpos);
+	}
+
+	std::string get_type() override {
+		if (!computed_type) retrieve_asmvar();
+		return type;
 	}
 };
 
 static std::string get_next_non_empty_token(bool allowEmpty = false);
 static void process_code_body();
-static std::pair<std::string, expression> get_next_expression();
+static std::pair<std::string, std::shared_ptr<expression>> get_next_expression();
 
 static bool equivalent_grouping(std::string a, std::string b) {
 	if (a == "(") return b == ")";
@@ -532,10 +826,11 @@ static bool equivalent_grouping(std::string a, std::string b) {
 struct variable_assignment {
 	std::string type_name;
 	std::string var_name;
-	std::pair<std::string, expression> expr;
+	std::string asm_name;
+	std::pair<std::string, std::shared_ptr<expression>> expr;
 };
 
-static std::variant<std::pair<std::string, expression>, variable_assignment> get_expression_or_variable_assignment() {
+static std::variant<std::pair<std::string, std::shared_ptr<expression>>, variable_assignment> get_expression_or_variable_assignment() {
 	std::string current_token = get_next_non_empty_token();
 	if (parser.is_type(current_token)) { // then we're defining a variable now.
 
@@ -549,9 +844,10 @@ static std::variant<std::pair<std::string, expression>, variable_assignment> get
 		auto assignment = get_next_expression();
 
 		return variable_assignment{
-			current_token,
-			var_name,
-			assignment
+			.type_name = assignment.second->get_type(),
+			.var_name = var_name,
+			.asm_name = assignment.second->retrieve_asmvar().second,
+			.expr = assignment,
 		};
 	}
 	else {
@@ -578,13 +874,15 @@ static std::string get_next_non_empty_token(bool allowEof) {
 }
 
 static void declare_variable(variable_assignment var) {
+	//assert(var.var_name != "joe");
 	parser.scopeStack.back().known_symbols[var.var_name] = symbol_type::variable;
+	parser.scopeStack.back().variables[var.var_name] = std::make_shared<varname>(var.asm_name, var.type_name, var.var_name);
 }
 
-// can NOT return an empty expression, may throw
-static std::pair<std::string, expression> get_next_expression() {
-	std::string exp = "";
-	expression expression_tree;
+// can apparently (???) return an empty expression, may throw
+static std::pair<std::string, std::shared_ptr<expression>> get_next_expression() {
+	std::string expString = "";
+	std::shared_ptr<expression> expression_parse = std::make_shared<expression>(std::vector<expression::token> {});
 	std::vector<std::string> groupingSymbolStack = {};
 	std::vector<int> last = { 0 }; // if 0, last was a binary operator (or nonexistent) so next better be a symbol, if 1, last was a symbol (so we better get a binary operand now)
 	std::vector<bool> unary = { false };
@@ -611,19 +909,38 @@ static std::pair<std::string, expression> get_next_expression() {
 		else if (next == "(" || next == "[") {
 			if (last.back() == 0) { // then its
 				if (next == "[") throw std::runtime_error("unexpected \"[\" in expression");
-				groupingSymbolStack.push_back(next);
+
+				auto [str, subexpression] = get_next_expression();
+				expString += str;
+				expression_parse->tokens.push_back(subexpression);
+
+				last.push_back(1);
+				unary.push_back(false);
+				/*groupingSymbolStack.push_back(next);
 				last.push_back(0);
 				unary.push_back(false);
-				exp += next;
+				expString += next;*/
 			}
 			else {
-				exp += next;
+				expString += next;
+				assert(!expression_parse->tokens.empty());
+				auto function = expression_parse->tokens.back();
+				expression_parse->tokens.pop_back();
+				std::shared_ptr<funccall> call = std::make_shared<funccall>();
+				auto s = std::get<std::shared_ptr<operand>>(function)->retrieve_asmvar().second;
+				call->function = parser.get_function_info(s);
+
 				while (true) {
 					auto [str, subexpression] = get_next_expression();
-					exp += str;
+					if (!str.empty()) {
+						expString += str;
+
+						call->args.push_back(subexpression);
+
+					}
 
 					auto subnext = get_next_non_empty_token();
-					exp += subnext;
+					expString += subnext;
 					if (subnext == ",") {
 						
 					}
@@ -635,8 +952,13 @@ static std::pair<std::string, expression> get_next_expression() {
 					}
 				}
 				
+				expression_parse->tokens.push_back(call);
 				unary.back() = false;
 				last.back() = 1;
+
+				if (call->function->arg_typenames.size() != call->args.size()) {
+					throw std::runtime_error(std::string("expected ") + std::to_string(call->function->arg_typenames.size()) + " args, got " + std::to_string(call->args.size()) + " args instead");
+				}
 			}
 		}
 		else if (next == "}" || next == "]" || next == ")") {
@@ -645,13 +967,14 @@ static std::pair<std::string, expression> get_next_expression() {
 				break;
 			}
 			else if (equivalent_grouping(groupingSymbolStack.back(), next)) {
-				if (last.back() == 0 || unary.back()) throw std::runtime_error(std::string("expected symbol, got \"" + next + "\""));
+				assert(false);
+				/*if (last.back() == 0 || unary.back()) throw std::runtime_error(std::string("expected symbol, got \"" + next + "\""));
 				groupingSymbolStack.pop_back();
 				last.pop_back();
 				unary.pop_back();
 				last.back() = 1;
 				unary.back() = false;
-				exp += next;
+				expString += next;*/
 			}
 			else {
 				throw std::runtime_error(std::string("unexpected \"") + next + "\" to close " + groupingSymbolStack.back());
@@ -659,27 +982,34 @@ static std::pair<std::string, expression> get_next_expression() {
 		}
 		else if (unary_operators.contains(next)) {
 			if (unary.back()) throw std::runtime_error("unary operators cannot directly follow each other");
-			exp += next;
 			if (last.back() == 1) throw std::runtime_error("unary operator cannot follow a symbol (expected a binary operator or end of the expression)");
+			expString += next;
+			expression_parse->tokens.push_back(unary_operators[next]);
 			unary.back() = true;
 		}
 		else if (binary_operators.contains(next)) {
 			if (unary.back()) throw std::runtime_error("binary operator should not follow unary operator");
-			exp += next;
+			expString += next;
+			expression_parse->tokens.push_back(binary_operators[next]);
 			last.back() = 0;
 		}
 		else if (next == "function") {
 
 			auto ret_type = get_next_non_empty_token();
 
+			std::vector<std::string> argtypes;
+			std::string func_type = ret_type + "(";
+
 			parser.scopeStack.push_back(scope{ .type = scope_type::function, .should_return = ret_type == "void"});
 			parser.taskStack.push_back(parsing_task_info{ .task = parsing_task::code_body, .line_number = tokenizer.current_line_number });
 
 			if (!parser.is_type(ret_type)) throw std::runtime_error("unrecognized function return type \"" + ret_type + "\"");
 			if (get_next_non_empty_token() != "(") throw std::runtime_error("expected \"(\" after declaring function return type");
+			int argi = 0;
 			while (true) {
 				std::string next_arg = get_next_non_empty_token();
-
+				func_type += next_arg;
+				argtypes.push_back(next_arg);
 				if (!parser.is_type(next_arg)) throw std::runtime_error("unrecognized function argument type \"" + next_arg + "\"");
 
 				std::string arg_name = get_next_non_empty_token();
@@ -690,10 +1020,20 @@ static std::pair<std::string, expression> get_next_expression() {
 					throw std::runtime_error("expected \"(\" or \",\" after function parameter");
 				}
 				else {
-					parser.scopeStack.back().known_symbols[arg_name] = symbol_type::variable;
+					auto v = std::make_shared<varname>("arg" + std::to_string(argi), next_arg, arg_name);
+					auto e = std::make_shared<expression>(std::vector<expression::token> { v });
+					variable_assignment assignment = {
+						.type_name = next_arg,
+						.var_name = arg_name,
+						.asm_name = get_next_assembly_name(),
+						.expr = std::make_pair(std::string("??FIJIWJI"), e)
+					};
+					declare_variable(assignment);
+					func_type += delimiter;
 					if (delimiter == ")")
 						break;
 				}
+				argi++;
 			}
 
 			if (get_next_non_empty_token() != "{") throw std::runtime_error("expected \"{\" before function body");
@@ -701,19 +1041,42 @@ static std::pair<std::string, expression> get_next_expression() {
 			if (last.back() == 1) throw std::runtime_error("symbol cannot follow another symbol");
 			unary.back() = false;
 			last.back() = 1;
-			exp += "<function_object>"; // TODO
+			expString += "<function_object>"; // TODO
+			auto asm_funcname = get_next_assembly_name();
+			parser.fmap[asm_funcname] = std::make_shared<function_info>(ret_type, func_type, argtypes, asm_funcname);
+			auto func = std::make_shared<varname>(asm_funcname, func_type);
+			expression_parse->tokens.push_back(func); // TODO: this function is anonymous 
 
 			process_code_body();
 
 			
 
 		}
-		else if (parser.is_variable(next) || parser.is_literal(next) || (!exp.empty() && exp.back() == '.')) { // dot operator doesn't want a variable name/literal
+		else if (parser.is_variable(next) || parser.is_literal(next) || (!expString.empty() && expString.back() == '.')) { // dot operator doesn't want a variable name/literal
 			if (last.back() == 1) throw std::runtime_error("symbol cannot follow another symbol");
 			if (is_reserved(next)) throw std::runtime_error("\"" + next + "\" is invalid in this context");
 			unary.back() = false;
 			last.back() = 1;
-			exp += next;
+			expString += next;
+			
+			if (next == "joe") {
+				std::cout << "";
+			}
+
+			if (parser.is_variable(next)) {
+				//if (!symbol_to_assembly_names.contains(next)) {
+					//auto asmname = get_next_assembly_name();
+					//symbol_to_assembly_names[next] = asmname;
+				//}
+				expression_parse->tokens.push_back(parser.get_variable(next));
+			}
+			else if (parser.is_literal(next).has_value()) {
+				expression_parse->tokens.push_back(std::make_shared<literal>(*parser.is_literal(next), next)); // TODO
+			}
+			else {
+				throw std::runtime_error("unimplemented");
+				//expression_parse.operands.push_back(liter);// TODO: how to handle dot operator?
+			}
 		}
 		else {
 			// they gave something that doesn't go in the expression; if the expression is done that's fine, if it's not then we error
@@ -727,7 +1090,8 @@ static std::pair<std::string, expression> get_next_expression() {
 		}
 	}
 
-	return std::make_pair(exp, expression_tree);
+	expression_parse->shunting_yard();
+	return std::make_pair(expString, expression_parse);
 	};
 
 // IGNORES SCOPE, THAT'S YOUR JOB
@@ -834,6 +1198,10 @@ static void process_code_body() {
 		else if (current_token == "return") {
 			if (parser.scopeStack.back().should_return) {
 				auto return_expression = get_next_expression();
+				auto [asmt, varname] = return_expression.second->retrieve_asmvar();
+				out += asmt;
+				out += "\ndvar " + return_asmvar += " sym:" + varname;
+				out += "\njmp function_end_lbl";
 			}
 		}
 		else if (current_token == "while") {
@@ -939,6 +1307,9 @@ static void process_code_body() {
 					return_token(next);
 				}
 			}
+			else if (parser.scopeStack.back().type == scope_type::function) {
+				out += "\nlabel function_end_lbl";
+			}
 		}
 		else if (current_token == ";") {}
 		else {
@@ -947,7 +1318,14 @@ static void process_code_body() {
 			auto variant = get_expression_or_variable_assignment();
 
 			if (std::holds_alternative<variable_assignment>(variant)) {
+
 				declare_variable(std::get<variable_assignment>(variant));
+				auto [asmcode, asmvar] = std::get<variable_assignment>(variant).expr.second->retrieve_asmvar();
+				out += asmcode + "\ndvar " + std::get<variable_assignment>(variant).asm_name + " sym:" + asmvar;
+			}
+			else {
+				out += std::get<0>(variant).second->retrieve_asmvar().first;
+				
 			}
 		}
 	}
@@ -960,7 +1338,7 @@ int main(const char** args, int nargs) {
 	parser.scopeStack.push_back(scope {
 		.known_symbols = {
 			{"i32", symbol_type::type},
-			{"f32", symbol_type::type},
+			{"f64", symbol_type::type},
 			{"string", symbol_type::type},
 			{"void", symbol_type::type},
 			{"bool", symbol_type::type},
@@ -971,7 +1349,7 @@ int main(const char** args, int nargs) {
 
 	
 
-	src = ";" + get_src("test1.tla");
+	src = ";\n;\n;\n;" + get_src("test1.tla");
 	out = "";
 
 	
@@ -986,7 +1364,7 @@ int main(const char** args, int nargs) {
 
 			//continue;
 
-			
+			std::cout << "bruh";
 			
 
 			if (parser.taskStack.back().task == parsing_task::code_body) {
@@ -1008,4 +1386,42 @@ int main(const char** args, int nargs) {
 	std::cout << "\nOUTPUT:\n\n" << out;
 
 	return EXIT_SUCCESS;
+}
+
+std::pair<std::string, std::string> funccall::retrieve_asmvar()  {
+	std::string prep_asm = "";
+	std::string cfunc_asm = "\ncfunc " + function->assemblyfuncname + " ";
+	if (function->arg_typenames.size() != args.size()) {
+		throw std::runtime_error(std::string("expected ") + std::to_string(function->arg_typenames.size()) + " args, got " + std::to_string(args.size()) + " args instead");
+	}
+	if (function->arg_typenames.size() == 0) {
+		cfunc_asm += "null";
+	}
+	else {
+		for (int i = 0; i < function->arg_typenames.size(); i++) {
+			// try to convert each arg to the desired type
+			auto [prepcode, arglocationname] = args[i]->retrieve_asmvar();
+			if (function->arg_typenames[i].back() == '&') { // then this is pass by reference; can't do any conversions, must be exact type
+				if (function->arg_typenames[i] != args[i]->get_type()) {
+					throw std::runtime_error(std::string("error: mismatched types at argument #" + std::to_string(i + 1)));
+				}
+
+				prep_asm += prepcode;
+				cfunc_asm += "sym:" + arglocationname;
+			}
+			else {
+				auto copiedarg = "arg_temp" + std::to_string(i);
+				auto conversion_asm = implicit_convert_to_type(copiedarg, function->arg_typenames[i], args[i]->get_type());
+				if (!conversion_asm.has_value()) {
+					throw std::runtime_error(std::string("error: mismatched types at argument #" + std::to_string(i + 1) + " and no valid implicit conversion exists"));
+				}
+
+				prep_asm += prepcode + copy(copiedarg, arglocationname) + *conversion_asm;
+			}
+
+			cfunc_asm += "/";
+		}
+		cfunc_asm.pop_back();
+	}
+	return std::make_pair(prep_asm + cfunc_asm, return_asmvar);
 }

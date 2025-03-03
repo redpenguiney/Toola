@@ -1,9 +1,9 @@
 // comment
 i32 j = -2
 class A {
-	f32 a
+	f64 a
 	string b;
-	string&& c
+	string& c
 
 	var method1 = function void(A& self, i32 b) {}
 
@@ -16,12 +16,11 @@ class A {
 }
 
 
-//i32: 32 bit signed int
-//i32&: reference to ^
-//i32&&: reference to ^
-//all types passed by value
+//i32: 32 bit signed int, passed by value
+//i32&: reference to int, so the int is passed by reference
+//
 
-var joe = function i32(A& obj, string str) {
+//var joe = function i32(A& obj, string str) {
 	if (true) {
 	}
 	else {
@@ -40,11 +39,15 @@ var joe = function i32(A& obj, string str) {
 	
 	//}
 
-	obj.method1(obj, 31)
+	//obj.method1(obj, 31)
 
-	i32 a = (3 +obj.b[3.073] - 124 %= 3)
+	//int a = (3 +obj.b[3.073] - 124 %= 3)
+	i32 a = 0
 	a *= 2 - 3;
 
 	return 5
-}
+//}
+
+string jee = "die alone"
+//i32 p = joe()
 
