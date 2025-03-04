@@ -14,7 +14,14 @@ std::string get_next_assembly_name();
 class operand {
 public:
 	// returns the MCASM needed to retrieve the operand's value, and the MCASM symbol name in which that value is stored.
-	virtual std::pair<std::string, std::string> retrieve_asmvar() = 0;
+	//virtual std::pair<std::string, std::string> retrieve_asmvar() = 0;
+
+	// returns the MCASM needed to retrieve the operand's value, and the MCASM varname in which that value is stored, without preceding stuff like sym:<something>. 
+	// Throws if its value isn't in an asmvar (because it's a literal)
+	virtual std::pair<std::string, std::string> retrieve_asm_varname() = 0;
+
+	// returns the MCASM needed to retrieve the operand's value, and the MCASM varname in which that value is stored, with the preceding assembly type like sym:<something>. 
+	virtual std::pair<std::string, std::string> retrieve_asm_value() = 0;
 
 	virtual std::string get_type() = 0;
 
@@ -27,10 +34,20 @@ public:
 	std::string asmvarname;
 	std::string type;
 
-	varname(std::string avn, std::string type, std::string svn = "COMPILER_TEMPORARY") : symname(svn), type(type), asmvarname(avn) {}
+	varname(std::string avn, std::string type, std::string svn = "COMPILER_TEMPORARY") : 
+		symname(svn), 
+		type(type), 
+		asmvarname(avn) 
+	{
+	
+	}
 
 	// effectively returns reference
-	std::pair<std::string, std::string> retrieve_asmvar() override {
+	std::pair<std::string, std::string> retrieve_asm_value() override {
+		return std::make_pair("", "sym:" + asmvarname);
+	}
+
+	std::pair<std::string, std::string> retrieve_asm_varname() override {
 		return std::make_pair("", asmvarname);
 	}
 
@@ -347,7 +364,7 @@ public:
 
 	literal(std::string t, std::string v) : type(t), value(v) {};
 
-	std::pair<std::string, std::string> retrieve_asmvar() override {
+	std::pair<std::string, std::string> retrieve_asm_value() override {
 		auto literaltype = parser.is_literal(value);
 		assert(literaltype);
 
@@ -369,6 +386,12 @@ public:
 		else if (literaltype = "double") return std::make_pair("", "dbl:" + value);
 		else assert(false);
 	}
+
+	std::pair<std::string, std::string> retrieve_asm_varname() override {
+		assert(false); // attempt to find assembly variable name of a constant
+		abort();
+	}
+
 	std::string get_type() { return type; }
 
 	~literal() = default;
@@ -413,9 +436,9 @@ std::string without_ref(std::string type) {
 std::function < binary_operator_result(std::string, operand&, operand&)> make_math_func(std::string dblinstruction, std::string intinstruction, bool modifyFirst = false, int handle4th = 0) {
 	return [dblinstruction, intinstruction, handle4th, modifyFirst](std::string varname, operand& o1, operand& o2) {
 		std::string out;
-		auto [src1, o1v] = o1.retrieve_asmvar();
+		auto [src1, o1v] = o1.retrieve_asm_value();
 		out += src1;
-		auto [src2, o2v] = o2.retrieve_asmvar();
+		auto [src2, o2v] = o2.retrieve_asm_value();
 		out += src2;
 
 		std::string outtype;
@@ -470,7 +493,7 @@ std::function < binary_operator_result(std::string, operand&, operand&)> make_ma
 				o2v = temp;
 			}
 
-			out += "\n" + intinstruction + "sym:" + o1v + " sym:" + o2v + " " + varname;
+			out += "\n" + intinstruction + " " + o1v + " " + o2v + " " + varname;
 		}
 		else {
 			throw std::runtime_error("incompatible operands");
@@ -795,7 +818,7 @@ public:
 		tokens = out;
 	}
 
-	std::pair<std::string, std::string> retrieve_asmvar() override {
+	std::pair<std::string, std::string> retrieve_asm_varname() override {
 		assert(sorted);
 		std::string out;
 		std::vector<token> mathables;
@@ -819,7 +842,7 @@ public:
 		}
 
 		assert(mathables.size() == 1);
-		auto [src, storedpos] = std::get<std::shared_ptr<operand>>(mathables.back())->retrieve_asmvar();
+		auto [src, storedpos] = std::get<std::shared_ptr<operand>>(mathables.back())->retrieve_asm_varname();
 		out += src;
 
 		type = std::get<std::shared_ptr<operand>>(mathables.back())->get_type();
@@ -827,8 +850,13 @@ public:
 		return std::make_pair(out, storedpos);
 	}
 
+	std::pair<std::string, std::string> retrieve_asm_value() {
+		auto [src, varname] = retrieve_asm_varname();
+		return std::make_pair(src, "sym:" + varname);
+	}
+
 	std::string get_type() override {
-		if (!computed_type) retrieve_asmvar();
+		if (!computed_type) retrieve_asm_varname();
 		return type;
 	}
 };
@@ -850,7 +878,7 @@ static bool equivalent_grouping(std::string a, std::string b) {
 struct variable_assignment {
 	std::string type_name;
 	std::string var_name;
-	std::string asm_name;
+	std::string asm_name; // includes sym: or sint: or whatever so don't add it
 	std::pair<std::string, std::shared_ptr<expression>> expr;
 };
 
@@ -870,7 +898,7 @@ static std::variant<std::pair<std::string, std::shared_ptr<expression>>, variabl
 		return variable_assignment{
 			.type_name = assignment.second->get_type(),
 			.var_name = var_name,
-			.asm_name = assignment.second->retrieve_asmvar().second,
+			.asm_name = get_next_assembly_name(),
 			.expr = assignment,
 		};
 	}
@@ -1341,11 +1369,11 @@ static void process_code_body() {
 
 			auto variant = get_expression_or_variable_assignment();
 
-			if (std::holds_alternative<variable_assignment>(variant))4 {
+			if (std::holds_alternative<variable_assignment>(variant)) {
 
 				declare_variable(std::get<variable_assignment>(variant));
 				auto [asmcode, asmvar] = std::get<variable_assignment>(variant).expr.second->retrieve_asmvar();
-				out += asmcode + "\ndvar " + std::get<variable_assignment>(variant).asm_name + " sym:" + asmvar;
+				out += asmcode + "\ndvar " + std::get<variable_assignment>(variant).asm_name + " " + asmvar;
 			}
 			else {
 				out += std::get<0>(variant).second->retrieve_asmvar().first;
