@@ -17,6 +17,8 @@ public:
 	virtual std::pair<std::string, std::string> retrieve_asmvar() = 0;
 
 	virtual std::string get_type() = 0;
+
+	virtual ~operand() = default;
 };
 
 class varname : public operand {
@@ -335,6 +337,7 @@ public:
 	std::vector<std::shared_ptr<expression>> args;
 	std::pair<std::string, std::string> retrieve_asmvar();
 	std::string get_type() { return function->ret_typename; }
+	~funccall() = default;
 };
 
 class literal : public operand {
@@ -367,6 +370,8 @@ public:
 		else assert(false);
 	}
 	std::string get_type() { return type; }
+
+	~literal() = default;
 };
 
 
@@ -395,11 +400,18 @@ std::unordered_map<std::string, unary_operator> unary_operators{
 	{"!", unary_operator {}}
 };
 
-
+std::string without_ref(std::string type) {
+	if (type.back() == '&') {
+		type.pop_back();
+	}
+	assert(parser.is_type(type));
+	return type;
+}
 
 // handle4th: if 0 instruction takes 3 args, if 1 we discard 3rd arg and store 4th, if 2 we discard 4th and store 3rd
-std::function < binary_operator_result(std::string, operand&, operand&)> make_math_func(std::string dblinstruction, std::string intinstruction, int handle4th = 0) {
-	return [dblinstruction, intinstruction, handle4th](std::string varname, operand& o1, operand& o2) {
+// TODO: HANDLE REFERENCE TYPES
+std::function < binary_operator_result(std::string, operand&, operand&)> make_math_func(std::string dblinstruction, std::string intinstruction, bool modifyFirst = false, int handle4th = 0) {
+	return [dblinstruction, intinstruction, handle4th, modifyFirst](std::string varname, operand& o1, operand& o2) {
 		std::string out;
 		auto [src1, o1v] = o1.retrieve_asmvar();
 		out += src1;
@@ -414,11 +426,16 @@ std::function < binary_operator_result(std::string, operand&, operand&)> make_ma
 		if (o1.get_type() == "double" || o2.get_type() == "double") {
 			outtype = "double";
 			if (o1.get_type() != "double") {
-				// copy o1 bc we don't want to change value of o1v.
-				std::string temp = get_next_assembly_name();
-				out += copy(temp, o1v);
-				implicit_convert_to_type(temp, o1.get_type(), "double");
-				o1v = temp;
+				if (!modifyFirst) {
+					// copy o1 bc we don't want to change value of o1v.
+					std::string temp = get_next_assembly_name();
+					out += copy(temp, o1v);
+					implicit_convert_to_type(temp, o1.get_type(), "double");
+					o1v = temp;
+				}
+				else {
+					throw std::runtime_error("incompatible operands");;
+				}
 			}
 			else if (o2.get_type() != "double") {
 				// copy o2 bc we don't want to change value of o1v.
@@ -434,11 +451,16 @@ std::function < binary_operator_result(std::string, operand&, operand&)> make_ma
 		else if (o1.get_type() == "int" || o2.get_type() == "int") {
 			outtype = "int";
 			if (o1.get_type() != "int") {
-				// copy o1 bc we don't want to change value of o1v.
-				std::string temp = get_next_assembly_name();
-				out += copy(temp, o1v);
-				implicit_convert_to_type(temp, o1.get_type(), "int");
-				o1v = temp;
+				if (!modifyFirst) {
+					// copy o1 bc we don't want to change value of o1v.
+					std::string temp = get_next_assembly_name();
+					out += copy(temp, o1v);
+					implicit_convert_to_type(temp, o1.get_type(), "int");
+					o1v = temp;
+				}
+				else {
+					throw std::runtime_error("incompatible operands");;
+				}
 			}
 			else if (o2.get_type() != "int") {
 				// copy o2 bc we don't want to change value of o1v.
@@ -465,8 +487,8 @@ std::unordered_map<std::string, binary_operator> binary_operators {
 	{".", binary_operator { .priority = 80}},
 
 	{"*", binary_operator {.priority = 70, .func = make_math_func("dmul", "smul")}},
-	{"/", binary_operator { .priority = 70, .func = make_math_func("dmul", "smul", 2)}},
-	{"%", binary_operator { .priority = 70, .func = make_math_func("dmul", "smul", 1)}},
+	{"/", binary_operator { .priority = 70, .func = make_math_func("ddiv", "sdiv", false, 2)}},
+	{"%", binary_operator { .priority = 70, .func = make_math_func("ddiv", "sdiv", false, 1)}},
 	
 	{"+", binary_operator { .priority = 60, .func = make_math_func("dadd", "sadd")}},
 	{"-", binary_operator { .priority = 60, .func = make_math_func("dsub", "ssub")}},
@@ -484,11 +506,11 @@ std::unordered_map<std::string, binary_operator> binary_operators {
 	{"||", binary_operator { .priority = 20}},
 
 	{"=", binary_operator { .a = right_to_left, .priority = 10}},
-	{"+=", binary_operator { .a = right_to_left, .priority = 10}},
-	{"-=", binary_operator { .a = right_to_left, .priority = 10}},
-	{"*=", binary_operator { .a = right_to_left, .priority = 10}},
-	{"/=", binary_operator { .a = right_to_left, .priority = 10}},
-	{"%=", binary_operator { .a = right_to_left, .priority = 10}},
+	{"+=", binary_operator { .a = right_to_left, .priority = 10, .func = make_math_func("dadd", "sadd", true)}},
+	{"-=", binary_operator { .a = right_to_left, .priority = 10, .func = make_math_func("dsub", "ssub", true)}},
+	{"*=", binary_operator { .a = right_to_left, .priority = 10, .func = make_math_func("dmul", "smul", true)}},
+	{"/=", binary_operator { .a = right_to_left, .priority = 10, .func = make_math_func("dsub", "ssub", true, 2)}},
+	{"%=", binary_operator { .a = right_to_left, .priority = 10, .func = make_math_func("dsub", "ssub", true, 1)}},
 };
 
 //std::unordered_map<std::string, operator_> post_operators{
@@ -777,12 +799,14 @@ public:
 		assert(sorted);
 		std::string out;
 		std::vector<token> mathables;
-		for (auto& op : tokens) {
+		auto rtokens = tokens;
+		std::reverse(rtokens.begin(), rtokens.end());
+		for (auto& op : rtokens) {
 			if (std::holds_alternative<std::shared_ptr<operand>>(op)) {
 				mathables.push_back(op);
 			}
 			else {
-				assert(mathables.size() >= 1);
+				assert(mathables.size() > 1);
 				auto o1 = mathables.back();
 				mathables.pop_back();
 				auto o2 = mathables.back();
@@ -1317,7 +1341,7 @@ static void process_code_body() {
 
 			auto variant = get_expression_or_variable_assignment();
 
-			if (std::holds_alternative<variable_assignment>(variant)) {
+			if (std::holds_alternative<variable_assignment>(variant))4 {
 
 				declare_variable(std::get<variable_assignment>(variant));
 				auto [asmcode, asmvar] = std::get<variable_assignment>(variant).expr.second->retrieve_asmvar();
