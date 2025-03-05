@@ -545,8 +545,52 @@ std::string get_next_label_name() {
 	return "l_" + std::to_string(j++);
 }
 
-std::function <binary_operator_result(std::string, operand&, operand&)> make_comparison_operator(std::string ) {
-	code goes here
+// takes the instruction that would make the condition false
+std::function <binary_operator_result(std::string, operand&, operand&)> make_comparison_operator(std::string instructionname) {
+	return [instructionname](std::string varname, operand& o1, operand& o2) {
+		
+		std::string out = "", outtype;
+
+		out += "\ndvar " + varname + " sint:0";
+		auto lblname = get_next_label_name() + "_eval_comp";
+		
+		auto [get_o1v_src, o1v] = o1.retrieve_asm_value();
+		auto [get_o2v_src, o2v] = o2.retrieve_asm_value();
+
+		if (o1.get_type() != o2.get_type()) {
+			// try to convert o1's type to o2's type
+			auto attempt = implicit_convert_to_type("DONOTUSE", o1.get_type(), o2.get_type());
+			if (attempt.has_value()) {
+				auto pair = o1.retrieve_asm_value_copy(); // need a copy bc we're casting
+				o1v = pair.second;
+				get_o1v_src = pair.first + *implicit_convert_to_type(o1v, o1.get_type(), o2.get_type());
+			}
+			else {
+				// try to convert o2's type to o1's type
+				auto attempt = implicit_convert_to_type("DONOTUSE", o2.get_type(), o1.get_type());
+				if (attempt.has_value()) {
+					auto pair = o2.retrieve_asm_value_copy(); // need a copy bc we're casting
+					o2v = pair.second;
+					get_o2v_src = pair.first + *implicit_convert_to_type(o2v, o2.get_type(), o1.get_type());
+				}
+				else {
+					throw std::runtime_error("incompatible operands");
+				}
+			}
+		}
+
+
+		out += get_o1v_src;
+		out += get_o2v_src;
+		out += "\n" + instructionname + " " + lblname + " " + o1v + " " + o2v;
+		out += "\ndvar " + varname + " sint:1";
+		out += "\nlabel " + lblname;
+
+		return binary_operator_result{
+			.type = outtype,
+			.src = out
+		};
+	};
 }
 
 // see https://en.cppreference.com/w/cpp/language/operator_precedence
@@ -561,13 +605,13 @@ std::unordered_map<std::string, binary_operator> binary_operators {
 	{"+", binary_operator { .priority = 60, .func = make_math_func("dadd", "sadd")}},
 	{"-", binary_operator { .priority = 60, .func = make_math_func("dsub", "ssub")}},
 
-	{">=", binary_operator { .priority = 50, .func = make_math_func("dmul", "smul")}},
-	{"<=", binary_operator { .priority = 50, .func = make_math_func("dmul", "smul")}},
-	{"<", binary_operator { .priority = 50, .func = make_math_func("dmul", "smul")}},
-	{">", binary_operator { .priority = 50, .func = make_math_func("dmul", "smul")}},
+	{">=", binary_operator { .priority = 50, .func = make_comparison_operator("jl")}},
+	{"<=", binary_operator { .priority = 50, .func = make_comparison_operator("jg")}},
+	{"<", binary_operator { .priority = 50, .func = make_comparison_operator("jge")}},
+	{">", binary_operator { .priority = 50, .func = make_comparison_operator("jle")}},
 
-	{"==", binary_operator { .priority = 40}},
-	{"!=", binary_operator { .priority = 40}},
+	{"==", binary_operator { .priority = 40, .func = make_comparison_operator("jne")}},
+	{"!=", binary_operator { .priority = 40, .func = make_comparison_operator("je")}},
 
 	{"&&", binary_operator { .priority = 30}},
 
