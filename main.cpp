@@ -10,6 +10,7 @@
 #include <optional>
 
 std::string get_next_assembly_name();
+std::string copy(std::string, std::string);
 
 class operand {
 public:
@@ -18,10 +19,12 @@ public:
 
 	// returns the MCASM needed to retrieve the operand's value, and the MCASM varname in which that value is stored, without preceding stuff like sym:<something>. 
 	// Throws if its value isn't in an asmvar (because it's a literal)
-	virtual std::pair<std::string, std::string> retrieve_asm_varname() = 0;
+	//virtual std::pair<std::string, std::string> retrieve_asm_varname() = 0;
 
 	// returns the MCASM needed to retrieve the operand's value, and the MCASM varname in which that value is stored, with the preceding assembly type like sym:<something>. 
 	virtual std::pair<std::string, std::string> retrieve_asm_value() = 0;
+
+	virtual std::pair<std::string, std::string> retrieve_asm_value_copy() = 0;
 
 	virtual std::string get_type() = 0;
 
@@ -47,9 +50,14 @@ public:
 		return std::make_pair("", "sym:" + asmvarname);
 	}
 
-	std::pair<std::string, std::string> retrieve_asm_varname() override {
-		return std::make_pair("", asmvarname);
+	std::pair<std::string, std::string> retrieve_asm_value_copy() override {
+		auto copy_name = get_next_assembly_name() + "_copy";
+		return std::make_pair(copy(copy_name, asmvarname), copy_name);
 	}
+
+	//std::pair<std::string, std::string> retrieve_asm_varname() override {
+		//return std::make_pair("", asmvarname);
+	//}
 
 	std::string get_type() { return type; }
 };
@@ -86,6 +94,7 @@ struct scope {
 	std::unordered_map < std::string, std::shared_ptr<varname>> variables = {};
 	scope_type type;
 	bool should_return = false;
+	std::string return_type = "void";
 };
 
 struct parsing_task_info {
@@ -108,7 +117,7 @@ struct parser_context {
 	std::vector<parsing_task_info> taskStack;
 	std::vector<scope> scopeStack;
 
-	// returns nullopt if not, otherwise will return "boolean", "string", "null", "double", or "int"
+	// returns nullopt if not, otherwise will return "boolean", "string", "null", "f64", or "i32"
 	std::optional<std::string> is_literal(std::string literal) {
 		// boolean literal
 		if (literal == "true" || literal == "false") return "boolean";
@@ -125,10 +134,10 @@ struct parser_context {
 		);
 		if (std::regex_match(literal, number_regex)) {
 			if (literal.find_first_of(".") != std::string::npos) {
-				return "double";
+				return "f64";
 			}
 			else {
-				return "int";
+				return "i32";
 			}
 		}
 		else {
@@ -309,9 +318,10 @@ std::string copy(std::string asmdst, std::string asmsrc) {
 
 // returns the code to convert the value of the given variable of the given type into the second type, if such a conversion is legal under implicit conditions (between binary operators). 
 std::optional<std::string> implicit_convert_to_type(std::string asm_varname, std::string ti_type, std::string tf_type) {
-	if (ti_type == tf_type) return "";// "\ndvar " + tf_asm_varname + " sym:" + ti_asm_varname;
-	else if (tf_type == "double") {
-		if (ti_type == "int") {
+	if (ti_type == tf_type) 
+		return "";// "\ndvar " + tf_asm_varname + " sym:" + ti_asm_varname;
+	else if (tf_type == "f64") {
+		if (ti_type == "i32") {
 			return "\ns2d sym:" + asm_varname + " " + asm_varname;
 		}
 		else {
@@ -325,8 +335,8 @@ std::optional<std::string> implicit_convert_to_type(std::string asm_varname, std
 std::optional<std::string> explicit_convert_to_type(std::string asm_varname, std::string ti_type, std::string tf_type) {
 	auto attempt = implicit_convert_to_type(asm_varname, ti_type, tf_type);
 	if (attempt.has_value()) return attempt;
-	else if (tf_type == "int") {
-		if (ti_type == "double") {
+	else if (tf_type == "i32") {
+		if (ti_type == "f64") {
 			return "\nd2s sym:" + asm_varname + " " + asm_varname;
 		}
 		else if (ti_type == "boolean") {
@@ -337,7 +347,7 @@ std::optional<std::string> explicit_convert_to_type(std::string asm_varname, std
 			return std::nullopt;
 		}
 	}
-	else if (tf_type == "double") {
+	else if (tf_type == "f64") {
 		if (ti_type == "boolean") {
 			// same as an int cast
 			return "\ns2d sym:" + asm_varname + " " + asm_varname;
@@ -352,7 +362,8 @@ class funccall : public operand {
 public:
 	std::shared_ptr<function_info> function;
 	std::vector<std::shared_ptr<expression>> args;
-	std::pair<std::string, std::string> retrieve_asmvar();
+	std::pair<std::string, std::string> retrieve_asm_value() override;
+	std::pair < std::string, std::string> retrieve_asm_value_copy() override { return retrieve_asm_value(); };
 	std::string get_type() { return function->ret_typename; }
 	~funccall() = default;
 };
@@ -382,14 +393,18 @@ public:
 			return std::make_pair("", v);
 		}
 		else if (literaltype == "boolean") return std::make_pair("", value == "true" ? "sint:1" : "sint:0");
-		else if (literaltype = "int") return std::make_pair("", "sint:" + value);
-		else if (literaltype = "double") return std::make_pair("", "dbl:" + value);
+		else if (literaltype = "i32") return std::make_pair("", "sint:" + value);
+		else if (literaltype = "f64") return std::make_pair("", "dbl:" + value);
 		else assert(false);
 	}
 
-	std::pair<std::string, std::string> retrieve_asm_varname() override {
-		assert(false); // attempt to find assembly variable name of a constant
-		abort();
+	//std::pair<std::string, std::string> retrieve_asm_varname() override {
+		//assert(false); // attempt to find assembly variable name of a constant
+		//abort();
+	//}
+
+	std::pair<std::string, std::string> retrieve_asm_value_copy() override {
+		return retrieve_asm_value();
 	}
 
 	std::string get_type() { return type; }
@@ -446,51 +461,68 @@ std::function < binary_operator_result(std::string, operand&, operand&)> make_ma
 		if (handle4th == 1) varname = "discard_result " + varname;
 		else if (handle4th == 2) varname = varname + " discard_result";
 			
-		if (o1.get_type() == "double" || o2.get_type() == "double") {
-			outtype = "double";
-			if (o1.get_type() != "double") {
+		if (o1.get_type() == "f64" || o2.get_type() == "f64") {
+			outtype = "f64";
+			if (o1.get_type() != "f64") {
 				if (!modifyFirst) {
 					// copy o1 bc we don't want to change value of o1v.
-					std::string temp = get_next_assembly_name();
-					out += copy(temp, o1v);
-					implicit_convert_to_type(temp, o1.get_type(), "double");
-					o1v = temp;
+					auto copy = o1.retrieve_asm_value_copy();
+					o1v = copy.second;
+					src1 = copy.first;
+					auto conv_code = implicit_convert_to_type(o1v, o1.get_type(), "f64");
+					if (conv_code.has_value())
+						src1 += *conv_code;
+					else
+						throw std::runtime_error("incompatible operands");
 				}
 				else {
 					throw std::runtime_error("incompatible operands");;
 				}
 			}
-			else if (o2.get_type() != "double") {
+			else if (o2.get_type() != "f64") {
+
 				// copy o2 bc we don't want to change value of o1v.
-				std::string temp = get_next_assembly_name();
-				out += copy(temp, o2v);
-				implicit_convert_to_type(temp, o2.get_type(), "double");
-				o2v = temp;
+				auto copy = o2.retrieve_asm_value_copy();
+				o2v = copy.second;
+				src2 = copy.first;
+				auto conv_code = implicit_convert_to_type(o2v, o2.get_type(), "f64");
+				if (conv_code.has_value())
+					src2 += *conv_code;
+				else
+					throw std::runtime_error("incompatible operands");
 			}
 
 
 			out += "\n" + dblinstruction + "sym:" + o1v + " sym:" + o2v + " " + varname;
 		}
-		else if (o1.get_type() == "int" || o2.get_type() == "int") {
-			outtype = "int";
-			if (o1.get_type() != "int") {
+		else if (o1.get_type() == "i32" || o2.get_type() == "i32") {
+			outtype = "i32";
+			if (o1.get_type() != "i32") {
 				if (!modifyFirst) {
 					// copy o1 bc we don't want to change value of o1v.
-					std::string temp = get_next_assembly_name();
-					out += copy(temp, o1v);
-					implicit_convert_to_type(temp, o1.get_type(), "int");
-					o1v = temp;
+					auto copy = o1.retrieve_asm_value_copy();
+					o1v = copy.second;
+					src1 = copy.first;
+					auto conv_code = implicit_convert_to_type(o1v, o1.get_type(), "i32");
+					if (conv_code.has_value())
+						src1 += *conv_code;
+					else
+						throw std::runtime_error("incompatible operands");
 				}
 				else {
 					throw std::runtime_error("incompatible operands");;
 				}
 			}
-			else if (o2.get_type() != "int") {
+			else if (o2.get_type() != "i32") {
 				// copy o2 bc we don't want to change value of o1v.
-				std::string temp = get_next_assembly_name();
-				out += copy(temp, o2v);
-				implicit_convert_to_type(temp, o2.get_type(), "int");
-				o2v = temp;
+				auto copy = o2.retrieve_asm_value_copy();
+				o2v = copy.second;
+				src2 = copy.first;
+				auto conv_code = implicit_convert_to_type(o2v, o2.get_type(), "i32");
+				if (conv_code.has_value())
+					src2 += *conv_code;
+				else
+					throw std::runtime_error("incompatible operands");
 			}
 
 			out += "\n" + intinstruction + " " + o1v + " " + o2v + " " + varname;
@@ -818,7 +850,7 @@ public:
 		tokens = out;
 	}
 
-	std::pair<std::string, std::string> retrieve_asm_varname() override {
+	std::pair<std::string, std::string> retrieve_asm_value() {
 		assert(sorted);
 		std::string out;
 		std::vector<token> mathables;
@@ -842,7 +874,7 @@ public:
 		}
 
 		assert(mathables.size() == 1);
-		auto [src, storedpos] = std::get<std::shared_ptr<operand>>(mathables.back())->retrieve_asm_varname();
+		auto [src, storedpos] = std::get<std::shared_ptr<operand>>(mathables.back())->retrieve_asm_value();
 		out += src;
 
 		type = std::get<std::shared_ptr<operand>>(mathables.back())->get_type();
@@ -850,13 +882,14 @@ public:
 		return std::make_pair(out, storedpos);
 	}
 
-	std::pair<std::string, std::string> retrieve_asm_value() {
-		auto [src, varname] = retrieve_asm_varname();
-		return std::make_pair(src, "sym:" + varname);
+	std::pair < std::string, std::string> retrieve_asm_value_copy() {
+		auto name = get_next_assembly_name() + "_copy";
+		auto [src, var] = retrieve_asm_value();
+		return std::make_pair(src + copy(name, var), name);
 	}
 
 	std::string get_type() override {
-		if (!computed_type) retrieve_asm_varname();
+		if (!computed_type) retrieve_asm_value();
 		return type;
 	}
 };
@@ -973,13 +1006,13 @@ static std::pair<std::string, std::shared_ptr<expression>> get_next_expression()
 				unary.push_back(false);
 				expString += next;*/
 			}
-			else {
+			else { // () mark a function call
 				expString += next;
 				assert(!expression_parse->tokens.empty());
 				auto function = expression_parse->tokens.back();
 				expression_parse->tokens.pop_back();
 				std::shared_ptr<funccall> call = std::make_shared<funccall>();
-				auto s = std::get<std::shared_ptr<operand>>(function)->retrieve_asmvar().second;
+				auto s = std::get<std::shared_ptr<operand>>(function)->retrieve_asm_value().second;
 				call->function = parser.get_function_info(s);
 
 				while (true) {
@@ -1010,6 +1043,9 @@ static std::pair<std::string, std::shared_ptr<expression>> get_next_expression()
 
 				if (call->function->arg_typenames.size() != call->args.size()) {
 					throw std::runtime_error(std::string("expected ") + std::to_string(call->function->arg_typenames.size()) + " args, got " + std::to_string(call->args.size()) + " args instead");
+				}
+				for (int i = 0; i < call->function->arg_typenames.size(); i++) {
+					if (call->function->arg_typenames[i] != call->args[i]->get_type()) throw std::runtime_error("mismatched argument #" + std::to_string(i + 1));
 				}
 			}
 		}
@@ -1249,10 +1285,13 @@ static void process_code_body() {
 		}
 		else if (current_token == "return") {
 			if (parser.scopeStack.back().should_return) {
-				auto return_expression = get_next_expression();
-				auto [asmt, varname] = return_expression.second->retrieve_asmvar();
-				out += asmt;
-				out += "\ndvar " + return_asmvar += " sym:" + varname;
+				if (parser.scopeStack.back().return_type != "void") {
+					auto return_expression = get_next_expression();
+					auto [asmt, varname] = parser.scopeStack.back().return_type.back() == '&' ? return_expression.second->retrieve_asm_value() : return_expression.second->retrieve_asm_value_copy();  
+					out += asmt;
+					out += "\ndvar " + return_asmvar += " sym:" + varname;
+				}
+				
 				out += "\njmp function_end_lbl";
 			}
 		}
@@ -1372,11 +1411,11 @@ static void process_code_body() {
 			if (std::holds_alternative<variable_assignment>(variant)) {
 
 				declare_variable(std::get<variable_assignment>(variant));
-				auto [asmcode, asmvar] = std::get<variable_assignment>(variant).expr.second->retrieve_asmvar();
-				out += asmcode + "\ndvar " + std::get<variable_assignment>(variant).asm_name + " " + asmvar;
+				auto [asmcode, asmvar] = std::get<variable_assignment>(variant).expr.second->retrieve_asm_value();
+				out += asmcode + "\ndvar " + std::get<variable_assignment>(variant).asm_name + " " + asmvar += " ;" + std::get<variable_assignment>(variant).var_name;
 			}
 			else {
-				out += std::get<0>(variant).second->retrieve_asmvar().first;
+				out += std::get<0>(variant).second->retrieve_asm_value().first;
 				
 			}
 		}
@@ -1440,7 +1479,7 @@ int main(const char** args, int nargs) {
 	return EXIT_SUCCESS;
 }
 
-std::pair<std::string, std::string> funccall::retrieve_asmvar()  {
+std::pair<std::string, std::string> funccall::retrieve_asm_value()  {
 	std::string prep_asm = "";
 	std::string cfunc_asm = "\ncfunc " + function->assemblyfuncname + " ";
 	if (function->arg_typenames.size() != args.size()) {
@@ -1452,8 +1491,9 @@ std::pair<std::string, std::string> funccall::retrieve_asmvar()  {
 	else {
 		for (int i = 0; i < function->arg_typenames.size(); i++) {
 			// try to convert each arg to the desired type
-			auto [prepcode, arglocationname] = args[i]->retrieve_asmvar();
+			//auto [prepcode, arglocationname] = args[i]->retrieve_asmvar();
 			if (function->arg_typenames[i].back() == '&') { // then this is pass by reference; can't do any conversions, must be exact type
+				auto [prepcode, arglocationname] = args[i]->retrieve_asm_value();
 				if (function->arg_typenames[i] != args[i]->get_type()) {
 					throw std::runtime_error(std::string("error: mismatched types at argument #" + std::to_string(i + 1)));
 				}
@@ -1461,14 +1501,16 @@ std::pair<std::string, std::string> funccall::retrieve_asmvar()  {
 				prep_asm += prepcode;
 				cfunc_asm += "sym:" + arglocationname;
 			}
-			else {
-				auto copiedarg = "arg_temp" + std::to_string(i);
-				auto conversion_asm = implicit_convert_to_type(copiedarg, function->arg_typenames[i], args[i]->get_type());
+			else
+			{
+				auto [prepcode, arglocationname] = args[i]->retrieve_asm_value_copy();
+				auto conversion_asm = implicit_convert_to_type(arglocationname, function->arg_typenames[i], args[i]->get_type());
 				if (!conversion_asm.has_value()) {
 					throw std::runtime_error(std::string("error: mismatched types at argument #" + std::to_string(i + 1) + " and no valid implicit conversion exists"));
 				}
 
-				prep_asm += prepcode + copy(copiedarg, arglocationname) + *conversion_asm;
+				prep_asm += prepcode + *conversion_asm;
+				cfunc_asm += arglocationname;
 			}
 
 			cfunc_asm += "/";
