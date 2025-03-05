@@ -532,8 +532,21 @@ std::function < binary_operator_result(std::string, operand&, operand&)> make_ma
 		}
 		//return "\ndvar " + varname + " "
 
+		if (modifyFirst) {
+			out += copy(o1v, varname);
+		}
+
 		return binary_operator_result{ .type = outtype, .src = out };
 	};
+}
+
+std::string get_next_label_name() {
+	static int j = 0;
+	return "l_" + std::to_string(j++);
+}
+
+std::function <binary_operator_result(std::string, operand&, operand&)> make_comparison_operator(std::string ) {
+	code goes here
 }
 
 // see https://en.cppreference.com/w/cpp/language/operator_precedence
@@ -862,9 +875,9 @@ public:
 			}
 			else {
 				assert(mathables.size() > 1);
-				auto o1 = mathables.back();
-				mathables.pop_back();
 				auto o2 = mathables.back();
+				mathables.pop_back();
+				auto o1 = mathables.back();
 				mathables.pop_back();
 				auto tempasmname = get_next_assembly_name();
 				auto subout = std::get<binary_operator>(op).func(tempasmname, *std::get<std::shared_ptr<operand>>(o1), *std::get<std::shared_ptr<operand>>(o2));
@@ -1085,6 +1098,9 @@ static std::pair<std::string, std::shared_ptr<expression>> get_next_expression()
 
 			auto ret_type = get_next_non_empty_token();
 
+			auto asm_funcname = get_next_assembly_name() + "_func";
+			std::string funcdef_asm = "\n\ndfunc " + asm_funcname + " ";
+
 			std::vector<std::string> argtypes;
 			std::string func_type = ret_type + "(";
 
@@ -1110,12 +1126,16 @@ static std::pair<std::string, std::shared_ptr<expression>> get_next_expression()
 				else {
 					auto v = std::make_shared<varname>("arg" + std::to_string(argi), next_arg, arg_name);
 					auto e = std::make_shared<expression>(std::vector<expression::token> { v });
+
+					auto asm_argname = get_next_assembly_name() + "_farg";
 					variable_assignment assignment = {
 						.type_name = next_arg,
 						.var_name = arg_name,
-						.asm_name = get_next_assembly_name(),
+						.asm_name = asm_argname,
 						.expr = std::make_pair(std::string("??FIJIWJI"), e)
 					};
+					funcdef_asm += asm_argname + ":sym/";
+
 					declare_variable(assignment);
 					func_type += delimiter;
 					if (delimiter == ")")
@@ -1124,20 +1144,24 @@ static std::pair<std::string, std::shared_ptr<expression>> get_next_expression()
 				argi++;
 			}
 
+			if (argi == 0) funcdef_asm += "null";
+			else funcdef_asm.pop_back();
+
 			if (get_next_non_empty_token() != "{") throw std::runtime_error("expected \"{\" before function body");
 
 			if (last.back() == 1) throw std::runtime_error("symbol cannot follow another symbol");
 			unary.back() = false;
 			last.back() = 1;
 			expString += "<function_object>"; // TODO
-			auto asm_funcname = get_next_assembly_name();
+			
 			parser.fmap[asm_funcname] = std::make_shared<function_info>(ret_type, func_type, argtypes, asm_funcname);
 			auto func = std::make_shared<varname>(asm_funcname, func_type);
 			expression_parse->tokens.push_back(func); // TODO: this function is anonymous 
 
+			out += funcdef_asm;
 			process_code_body();
-
-			
+			out += "\nlabel function_end_lbl";
+			out += "\nendfunc\n";
 
 		}
 		else if (parser.is_variable(next) || parser.is_literal(next) || (!expString.empty() && expString.back() == '.')) { // dot operator doesn't want a variable name/literal

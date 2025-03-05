@@ -3,7 +3,7 @@ i32 j = -2
 class A {
 	f64 a
 	string b;
-	string& c
+	string& cc
 
 	var method1 = function void(A& self, i32 b) {}
 
@@ -20,7 +20,7 @@ class A {
 //i32&: reference to int, so the int is passed by reference
 //
 
-//var joe = function i32(A& obj, string str) {
+var joe = function i32(A& obj, string str) {
 	if (true) {
 	}
 	else {
@@ -46,8 +46,9 @@ class A {
 	a *= 2 - 3;
 
 	return 5
-//}
+}
 
 string jee = "die alone"
+
 //i32 p = joe()
 
