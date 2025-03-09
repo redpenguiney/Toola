@@ -12,6 +12,8 @@
 std::string get_next_assembly_name();
 std::string copy(std::string, std::string);
 
+class varname;
+
 class operand {
 public:
 	// returns the MCASM needed to retrieve the operand's value, and the MCASM symbol name in which that value is stored.
@@ -37,13 +39,7 @@ public:
 	std::string asmvarname;
 	std::string type;
 
-	varname(std::string avn, std::string type, std::string svn = "COMPILER_TEMPORARY") : 
-		symname(svn), 
-		type(type), 
-		asmvarname(avn) 
-	{
-	
-	}
+	varname(std::string avn, std::string type, std::string svn = "COMPILER_TEMPORARY");
 
 	// effectively returns reference
 	std::pair<std::string, std::string> retrieve_asm_value() override {
@@ -549,7 +545,7 @@ std::string get_next_label_name() {
 std::function <binary_operator_result(std::string, operand&, operand&)> make_comparison_operator(std::string instructionname) {
 	return [instructionname](std::string varname, operand& o1, operand& o2) {
 		
-		std::string out = "", outtype;
+		std::string out = "", outtype = "bool";
 
 		out += "\ndvar " + varname + " sint:0";
 		auto lblname = get_next_label_name() + "_eval_comp";
@@ -593,52 +589,85 @@ std::function <binary_operator_result(std::string, operand&, operand&)> make_com
 	};
 }
 
-// see https://en.cppreference.com/w/cpp/language/operator_precedence
-std::unordered_map<std::string, binary_operator> binary_operators {
-	
-	{".", binary_operator { .priority = 80}},
+std::unordered_map<std::string, binary_operator> // see https://en.cppreference.com/w/cpp/language/operator_precedence
+binary_operators = {
+
+	{".", binary_operator {.priority = 80}},
 
 	{"*", binary_operator {.priority = 70, .func = make_math_func("dmul", "smul")}},
-	{"/", binary_operator { .priority = 70, .func = make_math_func("ddiv", "sdiv", false, 2)}},
-	{"%", binary_operator { .priority = 70, .func = make_math_func("ddiv", "sdiv", false, 1)}},
-	
-	{"+", binary_operator { .priority = 60, .func = make_math_func("dadd", "sadd")}},
-	{"-", binary_operator { .priority = 60, .func = make_math_func("dsub", "ssub")}},
+	{"/", binary_operator {.priority = 70, .func = make_math_func("ddiv", "sdiv", false, 2)}},
+	{"%", binary_operator {.priority = 70, .func = make_math_func("ddiv", "sdiv", false, 1)}},
 
-	{">=", binary_operator { .priority = 50, .func = make_comparison_operator("jl")}},
-	{"<=", binary_operator { .priority = 50, .func = make_comparison_operator("jg")}},
-	{"<", binary_operator { .priority = 50, .func = make_comparison_operator("jge")}},
-	{">", binary_operator { .priority = 50, .func = make_comparison_operator("jle")}},
+	{"+", binary_operator {.priority = 60, .func = make_math_func("dadd", "sadd")}},
+	{"-", binary_operator {.priority = 60, .func = make_math_func("dsub", "ssub")}},
 
-	{"==", binary_operator { .priority = 40, .func = make_comparison_operator("jne")}},
-	{"!=", binary_operator { .priority = 40, .func = make_comparison_operator("je")}},
+	{">=", binary_operator {.priority = 50, .func = make_comparison_operator("jl")}},
+	{"<=", binary_operator {.priority = 50, .func = make_comparison_operator("jg")}},
+	{"<", binary_operator {.priority = 50, .func = make_comparison_operator("jge")}},
+	{">", binary_operator {.priority = 50, .func = make_comparison_operator("jle")}},
 
-	{"&&", binary_operator { .priority = 30}},
+	{"==", binary_operator {.priority = 40, .func = make_comparison_operator("jne")}},
+	{"!=", binary_operator {.priority = 40, .func = make_comparison_operator("je")}},
 
-	{"||", binary_operator { .priority = 20}},
+	{"&&", binary_operator {.priority = 30}},
 
-	{"=", binary_operator {.a = right_to_left, .priority = 10, .func = [](std::string varname, operand& o1, operand& 2) -> binary_operator_result {
-		std::string src = "";
+	{"||", binary_operator {.priority = 20}},
 
-		
-		return binary_operator_result {
-			.src = "\ndvar " + varname + " " + o2.get_asm_value(),
-			.type = o1.get
-}
-	}}},
-	{"+=", binary_operator { .a = right_to_left, .priority = 10, .func = make_math_func("dadd", "sadd", true)}},
-	{"-=", binary_operator { .a = right_to_left, .priority = 10, .func = make_math_func("dsub", "ssub", true)}},
-	{"*=", binary_operator { .a = right_to_left, .priority = 10, .func = make_math_func("dmul", "smul", true)}},
-	{"/=", binary_operator { .a = right_to_left, .priority = 10, .func = make_math_func("dsub", "ssub", true, 2)}},
-	{"%=", binary_operator { .a = right_to_left, .priority = 10, .func = make_math_func("dsub", "ssub", true, 1)}},
+	{"=", binary_operator {.a = right_to_left, .priority = 10, .func = [](std::string asm_varname, operand& o1, operand& o2) -> binary_operator_result {
+
+		if (dynamic_cast<varname*>(&o1) == nullptr || dynamic_cast<varname*>(&o1)->symname == "COMPILER_TEMPORARY") {
+			throw std::runtime_error("attempt to assign to non-variable");
+		}
+
+		auto t1 = o1.get_type();
+		auto t2 = o2.get_type();
+		if (t1.back() == '&') {
+			t1.pop_back();
+			if (t1 == t2) {
+
+				auto [ret_o2_code, ret_o2_varname] = o2.retrieve_asm_value();
+				auto [ret_o1_code, ret_o1_varname] = o1.retrieve_asm_value();
+
+				// then just make t1 refer to t2
+			return binary_operator_result{
+				.type = t1 + "&",
+				.src = ret_o1_code + ret_o2_code + "\ndvar " + ret_o1_varname + " " + ret_o2_varname + "\ndvar " + asm_varname + " " + ret_o1_varname
+				};
+			}
+		else {
+			throw std::runtime_error("a variable of type " + t1 + "& cannot store a value of type " + t2 + "&");
+		}
+	}
+	else {
+		auto [ret_o2_code, ret_o2_varname] = o2.retrieve_asm_value_copy();
+		auto [ret_o1_code, ret_o1_varname] = o1.retrieve_asm_value();
+
+		auto conv_code = implicit_convert_to_type(ret_o2_varname, t2, t1);
+
+		if (!conv_code.has_value()) {
+			throw std::runtime_error("incompatible operands for assignment");
+		}
+		ret_o2_code += *conv_code;
+
+		return binary_operator_result{
+				.type = t1 + "&",
+				.src = ret_o1_code + ret_o2_code + "\ndvar " + ret_o1_varname + " " + ret_o2_varname + "\ndvar " + asm_varname + " " + ret_o1_varname
+		};
+	}
+},
+
+}},
+	{"+=", binary_operator {.a = right_to_left, .priority = 10, .func = make_math_func("dadd", "sadd", true)}},
+	{"-=", binary_operator {.a = right_to_left, .priority = 10, .func = make_math_func("dsub", "ssub", true)}},
+	{"*=", binary_operator {.a = right_to_left, .priority = 10, .func = make_math_func("dmul", "smul", true)}},
+	{"/=", binary_operator {.a = right_to_left, .priority = 10, .func = make_math_func("dsub", "ssub", true, 2)}},
+	{"%=", binary_operator {.a = right_to_left, .priority = 10, .func = make_math_func("dsub", "ssub", true, 1)}},
 };
-
 //std::unordered_map<std::string, operator_> post_operators{
 //	{"(", operator_ {.unary = true, .priority = 120} }, // function call
 //	{"[", operator_ {.unary = true, .priority = 120} }, // subscript
 //
 //}
-
 
 
 void return_token(std::string token) {
@@ -1443,6 +1472,7 @@ static void process_code_body() {
 		}
 		else if (current_token == "}") { // exit code body
 			bool could_have_else = parser.scopeStack.back().type == scope_type::if_;
+			auto stype = parser.scopeStack.back().type;
 			parser.taskStack.pop_back();
 			parser.scopeStack.pop_back();
 			if (parser.taskStack.empty()) throw std::runtime_error("expected <eof>, got \"}\"");
@@ -1474,8 +1504,8 @@ static void process_code_body() {
 					return_token(next);
 				}
 			}
-			else if (parser.scopeStack.back().type == scope_type::function) {
-				out += "\nlabel function_end_lbl";
+			else if (stype == scope_type::function) {
+				//out += "\nlabel function_end_lbl";
 			}
 		}
 		else if (current_token == ";") {}
@@ -1555,7 +1585,7 @@ int main(const char** args, int nargs) {
 	return EXIT_SUCCESS;
 }
 
-std::pair<std::string, std::string> funccall::retrieve_asm_value()  {
+std::pair<std::string, std::string> funccall::retrieve_asm_value() {
 	std::string prep_asm = "";
 	std::string cfunc_asm = "\ncfunc " + function->assemblyfuncname + " ";
 	if (function->arg_typenames.size() != args.size()) {
@@ -1594,4 +1624,12 @@ std::pair<std::string, std::string> funccall::retrieve_asm_value()  {
 		cfunc_asm.pop_back();
 	}
 	return std::make_pair(prep_asm + cfunc_asm, return_asmvar);
+}
+
+varname::varname(std::string avn, std::string type, std::string svn) :
+	symname(svn),
+	type(type),
+	asmvarname(avn)
+{
+	assert(parser.is_type(type));
 }

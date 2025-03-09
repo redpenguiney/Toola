@@ -1,7 +1,7 @@
 // comment
 i32 j = -2
 
-j = 3 == j
+bool jk = 3 == j
 
 class A {
 	f64 a
