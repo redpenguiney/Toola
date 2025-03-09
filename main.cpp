@@ -617,7 +617,15 @@ std::unordered_map<std::string, binary_operator> binary_operators {
 
 	{"||", binary_operator { .priority = 20}},
 
-	{"=", binary_operator { .a = right_to_left, .priority = 10}},
+	{"=", binary_operator {.a = right_to_left, .priority = 10, .func = [](std::string varname, operand& o1, operand& 2) -> binary_operator_result {
+		std::string src = "";
+
+		
+		return binary_operator_result {
+			.src = "\ndvar " + varname + " " + o2.get_asm_value(),
+			.type = o1.get
+}
+	}}},
 	{"+=", binary_operator { .a = right_to_left, .priority = 10, .func = make_math_func("dadd", "sadd", true)}},
 	{"-=", binary_operator { .a = right_to_left, .priority = 10, .func = make_math_func("dsub", "ssub", true)}},
 	{"*=", binary_operator { .a = right_to_left, .priority = 10, .func = make_math_func("dmul", "smul", true)}},
