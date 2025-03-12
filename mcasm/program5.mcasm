@@ -1,0 +1,25 @@
+; copy testing
+
+dvar x uint:112
+dvar y uint:null
+dvar result_str str:null
+
+dvar y sym:x
+u2str sym:y result_str
+cabi logi sym:result_str ; PRINT 1
+
+usub sym:y uint:5 y
+u2str sym:x result_str
+cabi logi sym:result_str ; PRINT 2
+u2str sym:y result_str
+cabi logi sym:result_str ; PRINT 3
+
+cvar x y
+u2str sym:y result_str
+cabi logi sym:result_str ; PRINT 4
+
+uadd sym:y uint:6 y
+u2str sym:x result_str
+cabi logi sym:result_str ; PRINT 5
+u2str sym:y result_str
+cabi logi sym:result_str ; PRINT 6

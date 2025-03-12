@@ -1,0 +1,8 @@
+; testing loops
+
+dvar i uint:0
+
+label loop
+;cabi logi str:108,111,111,111,111,111,111,111,111,111,111,112
+uadd sym:i uint:1 i
+ujl loop sym:i uint:1000000

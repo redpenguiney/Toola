@@ -1,0 +1,78 @@
+; array test
+dvar array_str str:null
+dvar array arr:sint:53/sint:54/sint:55/sint:56/sint:57/sint:58/sint:59/sint:60
+dvar array_int sint:null
+
+    ; print array length
+garrl array array_int
+cabi logi str:97,114,114,97,121,32,108,101,110,58
+u2str sym:array_int array_str
+cabi logi sym:array_str
+
+    ; get index 0 (sint)
+garr array uint:0 array_int
+cabi logi str:97,114,114,97,121,32,105,110,100,101,120,32,48
+s2str sym:array_int array_str
+cabi logi sym:array_str
+
+    ; set index 0
+sarr array uint:0 str:102,111,111,98,97,114,33
+    ; get index 0 (str)
+garr array uint:0 array_str
+cabi logi str:97,114,114,97,121,32,105,110,100,101,120,32,48
+cabi logi sym:array_str
+
+    ; append
+aarr array str:98,105,122,32,98,97,122,32,98,117,122,122
+
+    ; get index 8 (str)
+garr array uint:8 array_str
+cabi logi str:97,114,114,97,121,32,105,110,100,101,120,32,56
+cabi logi sym:array_str
+
+    ; insert at 5 (str)
+iarr array uint:5 str:97,98,99,100,101,102,103
+
+    ; get index 5 (str)
+garr array uint:5 array_str
+cabi logi str:97,114,114,97,121,32,105,110,100,101,120,32,53
+cabi logi sym:array_str
+
+    ; remove from 5 (str)
+rarr array uint:5
+
+    ; print array length
+garrl array array_int
+cabi logi str:97,114,114,97,121,32,108,101,110,58
+u2str sym:array_int array_str
+cabi logi sym:array_str
+    
+; add test
+dvar x sint:500234
+dvar y sint:656
+dvar result sint:null
+dvar result_str str:null
+
+dfunc foobar_func null
+    cabi logi str:72,101,108,108,111,44,32,77,67,86,77,33
+endfunc
+
+dfunc add a:sym/b:sym/c:sym
+    cabi logd str:97,100,100,105,110,103,46,46,46
+
+    sadd sym:a sym:b c
+    s2str sym:c result_str
+    cabi logd str:97,100,100,101,100,33
+
+    cabi logi str:114,101,115,117,108,116
+    cabi logi sym:result_str
+endfunc
+
+cfunc foobar_func null
+cfunc add sym:x/sym:y/sym:result
+
+cabi logi str:115,121,109,98,111,108,58
+sym2s result_str result
+s2str sym:result result_str
+cabi logi sym:result_str
+label end
