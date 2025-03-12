@@ -1,0 +1,16 @@
+; testing conditional jumps
+
+dvar x uint:11
+dvar y uint:10
+
+uje yes sym:x sym:y
+jmp no
+label yes
+cabi logi str:121,101,115
+jmp end
+label no
+cabi logi str:110,111
+jmp end
+
+label end
+cabi logi str:101,110,100

@@ -1,0 +1,21 @@
+; more testing
+
+dvar sint_var1 sint:600
+dvar sint_var2 sint:0
+dvar sint_var3 sint:0
+dvar uint_var uint:500
+dvar flt_var flt:0.5
+dvar dbl_var dbl:65.342
+dvar str_var str:null
+
+f2str sym:flt_var str_var
+cabi logi sym:str_var
+d2str sym:dbl_var str_var
+cabi logi sym:str_var
+
+u2s sym:uint_var sint_var2
+sdiv sym:sint_var1 sym:sint_var2 sint_var2 sint_var3
+s2str sym:sint_var2 str_var
+cabi logi sym:str_var
+s2str sym:sint_var3 str_var
+cabi logi sym:str_var

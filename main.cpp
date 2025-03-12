@@ -1582,6 +1582,10 @@ int main(const char** args, int nargs) {
 
 	std::cout << "\nOUTPUT:\n\n" << out;
 
+	std::ofstream input("asm/test1.mcasm");
+	
+	std::system("python mcasm/main.py asm/test1.mcasm")
+
 	return EXIT_SUCCESS;
 }
 
