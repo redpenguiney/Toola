@@ -14,6 +14,12 @@ std::string copy(std::string, std::string);
 
 class varname;
 
+struct type_info {
+	bool pass_by_reference = true;
+
+	std::string name;
+};
+
 class operand {
 public:
 	// returns the MCASM needed to retrieve the operand's value, and the MCASM symbol name in which that value is stored.
@@ -542,8 +548,8 @@ std::string get_next_label_name() {
 }
 
 // takes the instruction that would make the condition false
-std::function <binary_operator_result(std::string, operand&, operand&)> make_comparison_operator(std::string instructionname) {
-	return [instructionname](std::string varname, operand& o1, operand& o2) {
+std::function <binary_operator_result(std::string, operand&, operand&)> make_comparison_operator(std::string intinstruction, std::string dblinstruction) {
+	return [intinstruction, dblinstruction](std::string varname, operand& o1, operand& o2) {
 		
 		std::string out = "", outtype = "bool";
 
@@ -553,39 +559,110 @@ std::function <binary_operator_result(std::string, operand&, operand&)> make_com
 		auto [get_o1v_src, o1v] = o1.retrieve_asm_value();
 		auto [get_o2v_src, o2v] = o2.retrieve_asm_value();
 
-		if (o1.get_type() != o2.get_type()) {
-			// try to convert o1's type to o2's type
-			auto attempt = implicit_convert_to_type("DONOTUSE", o1.get_type(), o2.get_type());
-			if (attempt.has_value()) {
-				auto pair = o1.retrieve_asm_value_copy(); // need a copy bc we're casting
-				o1v = pair.second;
-				get_o1v_src = pair.first + *implicit_convert_to_type(o1v, o1.get_type(), o2.get_type());
+		if (o1.get_type() == "f64" || o2.get_type() == "f64") {
+			if (o1.get_type() != "f64") {
+				// copy o1 bc we don't want to change value of o1v.
+				auto copy = o1.retrieve_asm_value_copy();
+				o1v = copy.second;
+				get_o1v_src = copy.first;
+				auto conv_code = implicit_convert_to_type(o1v, o1.get_type(), "f64");
+				if (conv_code.has_value())
+					get_o1v_src += *conv_code;
+				else
+					throw std::runtime_error("incompatible operands");
+
 			}
-			else {
-				// try to convert o2's type to o1's type
-				auto attempt = implicit_convert_to_type("DONOTUSE", o2.get_type(), o1.get_type());
+			else if (o2.get_type() != "f64") {
+				// copy o2 bc we don't want to change value of o2v.
+				auto copy = o2.retrieve_asm_value_copy();
+				o2v = copy.second;
+				get_o2v_src = copy.first;
+				auto conv_code = implicit_convert_to_type(o2v, o2.get_type(), "f64");
+				if (conv_code.has_value())
+					get_o2v_src += *conv_code;
+				else
+					throw std::runtime_error("incompatible operands");
+			}
+
+			out += get_o1v_src;
+			out += get_o2v_src;
+			out += "\n" + dblinstruction + " " + lblname + " " + o1v + " " + o2v;
+			out += "\ndvar " + varname + " sint:1";
+			out += "\nlabel " + lblname;
+
+			return binary_operator_result{
+				.type = outtype,
+				.src = out
+			};
+		}
+		else if (o1.get_type() == "i32" || o2.get_type() == "i32") {
+			if (o1.get_type() != "i32") {
+				// copy o1 bc we don't want to change value of o1v.
+				auto copy = o1.retrieve_asm_value_copy();
+				o1v = copy.second;
+				get_o1v_src = copy.first;
+				auto conv_code = implicit_convert_to_type(o1v, o1.get_type(), "i32");
+				if (conv_code.has_value())
+					get_o1v_src += *conv_code;
+				else
+					throw std::runtime_error("incompatible operands");
+
+			}
+			else if (o2.get_type() != "i32") {
+				// copy o2 bc we don't want to change value of o2v.
+				auto copy = o2.retrieve_asm_value_copy();
+				o2v = copy.second;
+				get_o2v_src = copy.first;
+				auto conv_code = implicit_convert_to_type(o2v, o2.get_type(), "i32");
+				if (conv_code.has_value())
+					get_o2v_src += *conv_code;
+				else
+					throw std::runtime_error("incompatible operands");
+			}
+
+			out += get_o1v_src;
+			out += get_o2v_src;
+			out += "\n" + intinstruction + " " + lblname + " " + o1v + " " + o2v;
+			out += "\ndvar " + varname + " sint:1";
+			out += "\nlabel " + lblname;
+
+			return binary_operator_result{
+				.type = outtype,
+				.src = out
+			};
+		}
+		else {
+			if (o1.get_type() != o2.get_type()) {
+				// try to convert o1's type to o2's type
+				auto attempt = implicit_convert_to_type("DONOTUSE", o1.get_type(), o2.get_type());
 				if (attempt.has_value()) {
-					auto pair = o2.retrieve_asm_value_copy(); // need a copy bc we're casting
-					o2v = pair.second;
-					get_o2v_src = pair.first + *implicit_convert_to_type(o2v, o2.get_type(), o1.get_type());
+					auto pair = o1.retrieve_asm_value_copy(); // need a copy bc we're casting
+					o1v = pair.second;
+					get_o1v_src = pair.first + *implicit_convert_to_type(o1v, o1.get_type(), o2.get_type());
 				}
 				else {
-					throw std::runtime_error("incompatible operands");
+					// try to convert o2's type to o1's type
+					auto attempt = implicit_convert_to_type("DONOTUSE", o2.get_type(), o1.get_type());
+					if (attempt.has_value()) {
+						auto pair = o2.retrieve_asm_value_copy(); // need a copy bc we're casting
+						o2v = pair.second;
+						get_o2v_src = pair.first + *implicit_convert_to_type(o2v, o2.get_type(), o1.get_type());
+					}
+					else {
+						throw std::runtime_error("incompatible operands");
+					}
 				}
 			}
+
+			// symbol cast and comparison
+			out += get_o1v_src;
+			out += get_o2v_src;
+			out += "\n" + intinstruction + " " + lblname + " " + o1v + " " + o2v;
+			out += "\ndvar " + varname + " sint:1";
+			out += "\nlabel " + lblname;
 		}
 
-
-		out += get_o1v_src;
-		out += get_o2v_src;
-		out += "\n" + instructionname + " " + lblname + " " + o1v + " " + o2v;
-		out += "\ndvar " + varname + " sint:1";
-		out += "\nlabel " + lblname;
-
-		return binary_operator_result{
-			.type = outtype,
-			.src = out
-		};
+		assert(false);
 	};
 }
 
@@ -601,13 +678,13 @@ binary_operators = {
 	{"+", binary_operator {.priority = 60, .func = make_math_func("dadd", "sadd")}},
 	{"-", binary_operator {.priority = 60, .func = make_math_func("dsub", "ssub")}},
 
-	{">=", binary_operator {.priority = 50, .func = make_comparison_operator("jl")}},
-	{"<=", binary_operator {.priority = 50, .func = make_comparison_operator("jg")}},
-	{"<", binary_operator {.priority = 50, .func = make_comparison_operator("jge")}},
-	{">", binary_operator {.priority = 50, .func = make_comparison_operator("jle")}},
+	{">=", binary_operator {.priority = 50, .func = make_comparison_operator("sjl")}},
+	{"<=", binary_operator {.priority = 50, .func = make_comparison_operator("sjg")}},
+	{"<", binary_operator {.priority = 50, .func = make_comparison_operator("sjge")}},
+	{">", binary_operator {.priority = 50, .func = make_comparison_operator("sjle")}},
 
-	{"==", binary_operator {.priority = 40, .func = make_comparison_operator("jne")}},
-	{"!=", binary_operator {.priority = 40, .func = make_comparison_operator("je")}},
+	{"==", binary_operator {.priority = 40, .func = make_comparison_operator("sjne", "djne")}},
+	{"!=", binary_operator {.priority = 40, .func = make_comparison_operator("sje", "dje")}},
 
 	{"&&", binary_operator {.priority = 30}},
 
@@ -1582,9 +1659,12 @@ int main(const char** args, int nargs) {
 
 	std::cout << "\nOUTPUT:\n\n" << out;
 
-	std::ofstream input("asm/test1.mcasm");
+	std::ofstream input("assembly/test1.mcasm");
+
+	input << out;
+	input.flush();
 	
-	std::system("python mcasm/main.py asm/test1.mcasm")
+	std::system("python mcasm/main.py assembly/test1.mcasm");
 
 	return EXIT_SUCCESS;
 }
