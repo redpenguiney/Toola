@@ -23,13 +23,17 @@ struct _type_info {
 
 	
 	
-	/*type_info(const type_info& e):
+	/*_type_info(const _type_info& e):
 		pass_by_reference(e.pass_by_reference),
 		name(e.name),
 		fields(e.fields)
 	{
 
 	}*/
+
+	_type_info(bool b, std::string n, decltype(fields) f): pass_by_reference(b), name(n), fields(f) {
+		
+	}
 };
 using type_info = std::shared_ptr<_type_info>;
 
@@ -37,7 +41,12 @@ type_info void_type = std::shared_ptr<_type_info>(new _type_info(false, "void", 
 type_info i32_type = std::shared_ptr<_type_info>(new _type_info(false, "i32", {}));
 type_info f64_type = std::shared_ptr<_type_info>(new _type_info(false, "f64", {}));
 type_info bool_type = std::shared_ptr<_type_info>(new _type_info(false, "bool", {}));
-type_info string_type = std::shared_ptr<_type_info>(new _type_info(true, "string", {}));
+type_info string_type = std::shared_ptr<_type_info>(new _type_info(false, "string", {}));
+
+type_info i32_ref_type = std::shared_ptr<_type_info>(new _type_info(true, "i32&", {}));
+type_info f64_ref_type = std::shared_ptr<_type_info>(new _type_info(true, "f64&", {}));
+type_info bool_ref_type = std::shared_ptr<_type_info>(new _type_info(true, "bool&", {}));
+type_info string_ref_type = std::shared_ptr<_type_info>(new _type_info(true, "string&", {}));
 
 class operand {
 public:
@@ -54,6 +63,8 @@ public:
 	virtual std::pair<std::string, std::string> retrieve_asm_value_copy() = 0;
 
 	virtual type_info get_type() = 0;
+
+	virtual type_info get_referenceless_type() final;
 
 	virtual ~operand() = default;
 };
@@ -113,7 +124,17 @@ class varname;
 struct scope {
 	std::unordered_map<std::string, symbol_type> known_symbols;
 	std::unordered_map < std::string, std::shared_ptr<varname>> variables = {};
-	std::unordered_map<std::string, type_info> types;
+	std::unordered_map<std::string, type_info> types = {
+		{void_type->name, void_type},
+		{i32_type->name, i32_type},
+		{i32_ref_type->name, i32_ref_type},
+		{f64_type->name, f64_type},
+		{f64_ref_type->name, f64_ref_type},
+		{bool_type->name, bool_type},
+		{bool_ref_type->name, bool_ref_type},
+		{string_type->name, string_type},
+		{string_ref_type->name, string_ref_type},
+	};
 	scope_type type;
 	bool should_return = false;
 	type_info return_type = void_type;
@@ -131,7 +152,7 @@ struct function_info {
 	std::string assemblyfuncname = get_next_assembly_name();
 
 	function_info(type_info returntype, type_info totaltype, std::vector<type_info> argtypes, std::string asmname) :
-		cumulative_type(totaltype), ret_typename(returntype), arg_typenames(argtypes), assemblyfuncname(asmname) 
+		cumulative_type(totaltype), ret_type(returntype), arg_types(argtypes), assemblyfuncname(asmname) 
 	{}
 };
 
@@ -186,10 +207,6 @@ struct parser_context {
 	}
 
 	type_info is_basic_type(std::string symbol) { // returns nullptr if no
-		bool reference = false;
-		if (!symbol.empty() && symbol.back() == '&') { symbol.pop_back(); reference = true; }
-		if (!symbol.empty() && symbol.back() == '&') throw std::runtime_error("cannot have reference to reference");
-		//if (symbol == "var") return true;
 		for (auto it = scopeStack.rbegin(); it != scopeStack.rend(); it++) {
 			if (it->types.count(symbol)) {
 				return it->types[symbol];
@@ -248,7 +265,7 @@ struct parser_context {
 					i++;
 				}
 				
-				return std::shared_ptr<_type_info>(new _type_info(false, "FUNC_TYPE", {}, ));
+				return std::shared_ptr<_type_info>(new _type_info(false, "FUNC_TYPE", {}));
 			}
 
 			return false;
@@ -344,8 +361,8 @@ std::string copy(std::string asmdst, std::string asmsrc) {
 std::optional<std::string> implicit_convert_to_type(std::string asm_varname, type_info ti_type, type_info tf_type) {
 	if (ti_type == tf_type) 
 		return "";// "\ndvar " + tf_asm_varname + " sym:" + ti_asm_varname;
-	else if (tf_type == "f64") {
-		if (ti_type == "i32") {
+	else if (tf_type == f64_type) {
+		if (ti_type == i32_type) {
 			return "\ns2d sym:" + asm_varname + " " + asm_varname;
 		}
 		else {
@@ -359,11 +376,11 @@ std::optional<std::string> implicit_convert_to_type(std::string asm_varname, typ
 std::optional<std::string> explicit_convert_to_type(std::string asm_varname, type_info ti_type, type_info tf_type) {
 	auto attempt = implicit_convert_to_type(asm_varname, ti_type, tf_type);
 	if (attempt.has_value()) return attempt;
-	else if (tf_type == "i32") {
-		if (ti_type == "f64") {
+	else if (tf_type == i32_type) {
+		if (ti_type == f64_type) {
 			return "\nd2s sym:" + asm_varname + " " + asm_varname;
 		}
-		else if (ti_type == "boolean") {
+		else if (ti_type == bool_type) {
 			// boolean is already sint of either 1 or 2, this is easy
 			return "";
 		}
@@ -371,8 +388,8 @@ std::optional<std::string> explicit_convert_to_type(std::string asm_varname, typ
 			return std::nullopt;
 		}
 	}
-	else if (tf_type == "f64") {
-		if (ti_type == "boolean") {
+	else if (tf_type == f64_type) {
+		if (ti_type == bool_type) {
 			// same as an int cast
 			return "\ns2d sym:" + asm_varname + " " + asm_varname;
 		}
@@ -394,10 +411,10 @@ public:
 
 class literal : public operand {
 public:
-	std::string type;
+	type_info type;
 	std::string value;
 
-	literal(std::string t, std::string v) : type(t), value(v) {};
+	literal(type_info t, std::string v) : type(t), value(v) {};
 
 	std::pair<std::string, std::string> retrieve_asm_value() override {
 		auto literaltype = parser.is_literal(value);
@@ -431,7 +448,7 @@ public:
 		return retrieve_asm_value();
 	}
 
-	std::string get_type() { return type; }
+	type_info get_type() { return type; }
 
 	~literal() = default;
 };
@@ -485,9 +502,9 @@ std::function < binary_operator_result(std::string, operand&, operand&)> make_ma
 		if (handle4th == 1) varname = "discard_result " + varname;
 		else if (handle4th == 2) varname = varname + " discard_result";
 			
-		if (o1.get_type() == "f64" || o2.get_type() == "f64") {
+		if (o1.get_referenceless_type() == f64_type || o2.get_type() == f64_type) {
 			outtype = "f64";
-			if (o1.get_type() != "f64") {
+			if (o1.get_referenceless_type() != f64_type) {
 				if (!modifyFirst) {
 					// copy o1 bc we don't want to change value of o1v.
 					auto copy = o1.retrieve_asm_value_copy();
@@ -1737,4 +1754,13 @@ varname::varname(std::string avn, type_info type, std::string svn) :
 	type(type),
 	asmvarname(avn)
 {
+}
+
+type_info operand::get_referenceless_type() {
+	auto t = get_type();
+	if (t->pass_by_reference) {
+		std::string s = t->name;
+		s.pop_back();
+		return parser.is_type(s);
+	}
 }
