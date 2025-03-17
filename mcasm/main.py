@@ -46,7 +46,7 @@ if __name__ == "__main__":
             
         # create instruction code generator
         instruction_opcode = grammar.INSTRUCTION_OPCODES[instruction_name]
-        #print(f"  --> (line {line_index + 1}) assembling {instruction_name} (opcode: {instruction_opcode} scope: {ctx.scope_symbol})")
+        print(f"  --> (line {line_index + 1}) assembling {instruction_name} (opcode: {instruction_opcode} scope: {ctx.scope_symbol})")
         new_instruction_mcode_generator = grammar.INSTRUCTION_MCODE_GENERATORS[instruction_opcode](
             ctx,
             instruction_opcode,

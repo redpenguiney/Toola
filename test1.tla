@@ -51,6 +51,21 @@ var joe = function i32(A& obj, string str) {
 	return 5
 }
 
+f64 a = 1;
+f64 b = 2;
+f64& aref = a;
+f64& aref2 = b;
+aref = b; // ok: aref now refers to b
+aref += aref; // ok: b now == 4
+//aref = 3.0; // bad: can only refer to an rvalue
+//aref = a + b; // bad: can only refer to an rvalue
+
+a *= 3;
+a *= 4.0;
+
+i32 c = 4;
+// c += b; // bad: c + b is a double and cannot be assigned into an int
+
 string jee = "die alone"
 
 //i32 p = joe()

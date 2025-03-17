@@ -17,7 +17,7 @@ class ValueOperandMCodeGenerator:
 
         # handle symbol values
         # this also resolves symbol values for non-symbol types
-        non_symbol_type_value_is_symbol = ctx.scopes[ctx.scope_symbol].variable_symbols.get(value_field) is not None
+        non_symbol_type_value_is_symbol = utils.resolve_generic_symbol_name(ctx, value_field) is not None
         if self.type == grammar.ValueType.SYMBOL.value or non_symbol_type_value_is_symbol:
             # if non-symbol value is symbol, then make it a symbol but inform the user
             # that this is bad
@@ -25,7 +25,7 @@ class ValueOperandMCodeGenerator:
                 self.type = grammar.ValueType.SYMBOL.value
                 print(f"WARNING: symbol value \"{value_field}\" passed with non-symbol type, casting it to symbol...")
 
-            self.value_bytes = packing.pack_signed_integer_value_data(utils.resolve_variable_symbol_name(ctx, value_field))
+            self.value_bytes = packing.pack_signed_integer_value_data(utils.resolve_generic_symbol_name(ctx, value_field))
 
         else: # handle non-symbol value
             self.value_bytes = []
@@ -189,20 +189,7 @@ class SymbolOperandMCodeGenerator:
     def __init__(self, ctx, unparsed_operand):
         # parse
         self.name = unparsed_operand
-        variable_symbol_value = utils.resolve_variable_symbol_name(ctx, self.name)
-        # try variable
-        if variable_symbol_value is None:
-            # if not variable, try function
-            function_symbol_value = utils.resolve_function_symbol_name(ctx, self.name)
-            if function_symbol_value is None:
-                # all is lost
-                sys.exit("generic symbol handler couldn't resolve symbol, world explosion imminent")
-
-            else: # function success
-                self.value = function_symbol_value
-
-        else: # variable success
-            self.value = variable_symbol_value
+        self.value = utils.resolve_generic_symbol_name(ctx, self.name)
 
     def generate(self):
         return [
