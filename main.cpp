@@ -168,13 +168,18 @@ struct parser_context {
 		std::string t = function_type->name;
 		assert(t.find_first_of("(") != std::string::npos);
 		type_info_ ret_type = is_type(t.substr(0, t.find_first_of("(")));
-		t = t.substr(t.find_first_of("(") + 1, t.find_last_of(")"));
+		t = t.substr(t.find_first_of("(") + 1, t.find_last_of(")") - t.find_first_of("("));
 		std::vector<type_info_> arg_types = {};
 		while (!t.empty()) {
-			arg_types.push_back(is_type(t.substr(0, t.find_first_of("),")))); // todo: more powerful solution needed to remove duplicate code and enable function types as parameters/return values
-			t = t.substr(0, t.find_first_of("),"));
+			arg_types.push_back(is_type(t.substr(0, t.find_first_of("),")-1))); // todo: more powerful solution needed to remove duplicate code and enable function types as parameters/return values
+			t = t.substr(t.find_first_of("),") + 1);
+			if (arg_types.back() == nullptr) arg_types.pop_back();
 		}
 		return arg_types;
+	}
+
+	type_info_ extract_return_type(type_info_ function_type) {
+		return is_type(function_type->name.substr(0, function_type->name.find_first_of("(")));
 	}
 
 	// returns nullptr if not, otherwise will return type of literal
@@ -282,7 +287,7 @@ struct parser_context {
 					i++;
 				}
 				
-				return std::shared_ptr<_type_info>(new _type_info(false, "FUNC_TYPE", {}));
+				return std::shared_ptr<_type_info>(new _type_info(false, symbol, {}));
 			}
 
 			return nullptr;
@@ -438,7 +443,7 @@ public:
 	std::vector<std::shared_ptr<expression>> args;
 	std::pair<std::string, std::string> retrieve_asm_value() override;
 	std::pair < std::string, std::string> retrieve_asm_value_copy() override { return retrieve_asm_value(); };
-	type_info_ get_type() { return function->get_type(); }
+	type_info_ get_type() { assert(function); assert(function->get_type()); return parser.extract_return_type(function->get_type()); }
 	~funccall() = default;
 };
 
@@ -1350,8 +1355,8 @@ static std::pair<std::string, std::shared_ptr<expression>> get_next_expression()
 				expression_parse->tokens.push_back(call);
 				unary.back() = false;
 				last.back() = 1;
-
-				auto arg_types = parser.extract_arguments(call->get_type());
+				auto t_f = call->function->get_type();
+				auto arg_types = parser.extract_arguments(t_f);
 				if (arg_types.size() != call->args.size()) {
 					throw std::runtime_error(std::string("expected ") + std::to_string(arg_types.size()) + " args, got " + std::to_string(call->args.size()) + " args instead");
 				}
@@ -1461,7 +1466,7 @@ static std::pair<std::string, std::shared_ptr<expression>> get_next_expression()
 			expString += "<function_object>"; // TODO
 			
 			assert(parser.is_type(func_type_wip));
-			parser.fmap[asm_funcname] = std::make_shared<function_info>(parser.is_type(ret_type), parser.is_type(func_type_wip), argtypes, asm_funcname);
+			//parser.fmap[asm_funcname] = std::make_shared<function_info>(parser.is_type(ret_type), parser.is_type(func_type_wip), argtypes, asm_funcname);
 			auto func = std::make_shared<varname>(asm_funcname, parser.is_type(func_type_wip));
 			expression_parse->tokens.push_back(func); // TODO: this function is anonymous 
 
@@ -1785,7 +1790,8 @@ int main(const char** args, int nargs) {
 	src = ";\n;\n;\n;" + get_src("test1.tla");
 	out = "";
 
-	
+	// handle return statements
+	out += "\ndvar " + return_asmvar + " sint:0";
 
 	
 
@@ -1823,8 +1829,8 @@ int main(const char** args, int nargs) {
 	std::cout << "\nOUTPUT:\n\n" << out;
 
 	std::ofstream input("assembly/test1.mcasm");
-
-	input << out;
+	assert(input.good());
+	input << out << "\n";
 	input.flush();
 
 	std::cout << "\n\n";
@@ -1835,21 +1841,22 @@ int main(const char** args, int nargs) {
 }
 
 std::pair<std::string, std::string> funccall::retrieve_asm_value() {
-	std::string prep_asm = "";
-	std::string cfunc_asm = "\ncfunc " + function->assemblyfuncname + " ";
-	if (function->arg_types.size() != args.size()) {
-		throw std::runtime_error(std::string("expected ") + std::to_string(function->arg_types.size()) + " args, got " + std::to_string(args.size()) + " args instead");
+	auto [prep_asm, asm_funcname] = function->retrieve_asm_value();
+	std::string cfunc_asm = "\ncfunc " + asm_funcname + " ";
+	auto arg_types = parser.extract_arguments(function->get_type());
+	if (arg_types.size() != args.size()) {
+		throw std::runtime_error(std::string("expected ") + std::to_string(arg_types.size()) + " args, got " + std::to_string(args.size()) + " args instead");
 	}
-	if (function->arg_types.size() == 0) {
+	if (arg_types.size() == 0) {
 		cfunc_asm += "null";
 	}
 	else {
-		for (int i = 0; i < function->arg_types.size(); i++) {
+		for (int i = 0; i < arg_types.size(); i++) {
 			// try to convert each arg to the desired type
 			//auto [prepcode, arglocationname] = args[i]->retrieve_asmvar();
-			if (function->arg_types[i]->pass_by_reference) { // then this is pass by reference; can't do any conversions, must be exact type
+			if (arg_types[i]->pass_by_reference) { // then this is pass by reference; can't do any conversions, must be exact type
 				auto [prepcode, arglocationname] = args[i]->retrieve_asm_value();
-				if (function->arg_types[i] != args[i]->get_type()) {
+				if (arg_types[i] != args[i]->get_type()) {
 					throw std::runtime_error(std::string("error: mismatched types at argument #" + std::to_string(i + 1)));
 				}
 
@@ -1859,7 +1866,7 @@ std::pair<std::string, std::string> funccall::retrieve_asm_value() {
 			else
 			{
 				auto [prepcode, arglocationname] = args[i]->retrieve_asm_value_copy();
-				auto conversion_asm = implicit_convert_to_type(arglocationname, function->arg_types[i], args[i]->get_type());
+				auto conversion_asm = implicit_convert_to_type(arglocationname, arg_types[i], args[i]->get_type());
 				if (!conversion_asm.has_value()) {
 					throw std::runtime_error(std::string("error: mismatched types at argument #" + std::to_string(i + 1) + " and no valid implicit conversion exists"));
 				}
