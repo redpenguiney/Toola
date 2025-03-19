@@ -18,6 +18,12 @@ class A {
 	}
 }
 
+var aConstructor = function A() {
+	//A obj = new A()
+	//obj.a = 3
+	//return obj
+}
+
 
 //i32: 32 bit signed int, passed by value
 //i32&: reference to int, so the int is passed by reference
@@ -50,6 +56,8 @@ var joe = function i32(A& obj, string str) {
 
 	return 5
 }
+
+A aobject = aConstructor();
 
 f64 a = 1;
 f64 b = 2;

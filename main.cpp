@@ -148,20 +148,34 @@ struct parsing_task_info {
 	int line_number = -1;
 };
 
-struct function_info {
-	type_info_ cumulative_type;
-	type_info_ ret_type;
-	std::vector<type_info_> arg_types;
-	std::string assemblyfuncname = get_next_assembly_name();
-
-	function_info(type_info_ returntype, type_info_ totaltype, std::vector<type_info_> argtypes, std::string asmname) :
-		cumulative_type(totaltype), ret_type(returntype), arg_types(argtypes), assemblyfuncname(asmname) 
-	{}
-};
+//struct function_info {
+//	type_info_ cumulative_type;
+//	type_info_ ret_type;
+//	std::vector<type_info_> arg_types;
+//	//std::string assemblyfuncname = get_next_assembly_name(); can't know this at compiletime
+//
+//	function_info(type_info_ returntype, type_info_ totaltype, std::vector<type_info_> argtypes) :
+//		cumulative_type(totaltype), ret_type(returntype), arg_types(argtypes)
+//	{}
+//};
 
 struct parser_context {
 	std::vector<parsing_task_info> taskStack;
 	std::vector<scope> scopeStack;
+
+
+	std::vector<type_info_> extract_arguments(type_info_ function_type) {
+		std::string t = function_type->name;
+		assert(t.find_first_of("(") != std::string::npos);
+		type_info_ ret_type = is_type(t.substr(0, t.find_first_of("(")));
+		t = t.substr(t.find_first_of("(") + 1, t.find_last_of(")"));
+		std::vector<type_info_> arg_types = {};
+		while (!t.empty()) {
+			arg_types.push_back(is_type(t.substr(0, t.find_first_of("),")))); // todo: more powerful solution needed to remove duplicate code and enable function types as parameters/return values
+			t = t.substr(0, t.find_first_of("),"));
+		}
+		return arg_types;
+	}
 
 	// returns nullptr if not, otherwise will return type of literal
 	std::optional<type_info_> is_literal(std::string literal) {
@@ -289,11 +303,18 @@ struct parser_context {
 		return true;
 	}
 
-	std::unordered_map<std::string, std::shared_ptr<function_info>> fmap;
-
-	std::shared_ptr<function_info> get_function_info(std::string asmfuncname) {
-		return fmap.at(asmfuncname);
-	}
+	//function_info get_function_info(type_info_ function_signature) {
+	//	std::string t = function_signature->name;
+	//	assert(t.find_first_of("(") != std::string::npos);
+	//	type_info_ ret_type = is_type(t.substr(0, t.find_first_of("(")));
+	//	t = t.substr(t.find_first_of("(") + 1, t.find_last_of(")"));
+	//	std::vector<type_info_> arg_types = {};
+	//	while (!t.empty()) {
+	//		arg_types.push_back(is_type(t.substr(0, t.find_first_of("),")))); // todo: more powerful solution needed to remove duplicate code and enable function types as parameters/return values
+	//		t = t.substr(0, t.find_first_of("),"));
+	//	}
+	//	return function_info(ret_type, function_signature, arg_types);
+	//}
 };
 
 tokenizer_context tokenizer;
@@ -413,11 +434,11 @@ std::optional<std::string> explicit_convert_to_type(std::string asm_varname, typ
 
 class funccall : public operand {
 public:
-	std::shared_ptr<function_info> function;
+	std::shared_ptr<operand> function;
 	std::vector<std::shared_ptr<expression>> args;
 	std::pair<std::string, std::string> retrieve_asm_value() override;
 	std::pair < std::string, std::string> retrieve_asm_value_copy() override { return retrieve_asm_value(); };
-	type_info_ get_type() { return function->ret_type; }
+	type_info_ get_type() { return function->get_type(); }
 	~funccall() = default;
 };
 
@@ -1302,7 +1323,7 @@ static std::pair<std::string, std::shared_ptr<expression>> get_next_expression()
 				expression_parse->tokens.pop_back();
 				std::shared_ptr<funccall> call = std::make_shared<funccall>();
 				auto s = std::get<std::shared_ptr<operand>>(function)->retrieve_asm_value().second;
-				call->function = parser.get_function_info(s);
+				call->function = std::get<std::shared_ptr<operand>>(function);
 
 				while (true) {
 					auto [str, subexpression] = get_next_expression();
@@ -1330,11 +1351,12 @@ static std::pair<std::string, std::shared_ptr<expression>> get_next_expression()
 				unary.back() = false;
 				last.back() = 1;
 
-				if (call->function->arg_types.size() != call->args.size()) {
-					throw std::runtime_error(std::string("expected ") + std::to_string(call->function->arg_types.size()) + " args, got " + std::to_string(call->args.size()) + " args instead");
+				auto arg_types = parser.extract_arguments(call->get_type());
+				if (arg_types.size() != call->args.size()) {
+					throw std::runtime_error(std::string("expected ") + std::to_string(arg_types.size()) + " args, got " + std::to_string(call->args.size()) + " args instead");
 				}
-				for (int i = 0; i < call->function->arg_types.size(); i++) {
-					if (call->function->arg_types[i] != call->args[i]->get_type()) throw std::runtime_error("mismatched argument #" + std::to_string(i + 1));
+				for (int i = 0; i < arg_types.size(); i++) {
+					if (arg_types[i] != call->args[i]->get_type()) throw std::runtime_error("mismatched argument #" + std::to_string(i + 1));
 				}
 			}
 		}
@@ -1387,39 +1409,45 @@ static std::pair<std::string, std::shared_ptr<expression>> get_next_expression()
 			if (!parser.is_type(ret_type)) throw std::runtime_error("unrecognized function return type \"" + ret_type + "\"");
 			if (get_next_non_empty_token() != "(") throw std::runtime_error("expected \"(\" after declaring function return type");
 			int argi = 0;
-			while (true) {
-				std::string next_arg = get_next_non_empty_token();
+			std::string next_arg = get_next_non_empty_token();
+			if (next_arg != ")") {
+				while (true) {
+					func_type_wip += next_arg;
+
+					if (!parser.is_type(next_arg)) throw std::runtime_error("unrecognized function argument type \"" + next_arg + "\"");
+					argtypes.push_back(parser.is_type(next_arg));
+
+					std::string arg_name = get_next_non_empty_token();
+					if (!parser.is_valid_symbol_name(arg_name)) throw std::runtime_error("invalid argument name \"" + arg_name + "\"");
+
+					std::string delimiter = get_next_non_empty_token();
+					if (delimiter != ")" && delimiter != ",") {
+						throw std::runtime_error("expected \"(\" or \",\" after function parameter");
+					}
+					else {
+						auto v = std::make_shared<varname>("arg" + std::to_string(argi), parser.is_type(next_arg), arg_name);
+						auto e = std::make_shared<expression>(std::vector<expression::token> { v });
+
+						auto asm_argname = get_next_assembly_name() + "_farg";
+						variable_assignment assignment = {
+							.type = parser.is_type(next_arg),
+							.var_name = arg_name,
+							.asm_name = asm_argname,
+							.expr = std::make_pair(std::string("??FIJIWJI"), e)
+						};
+						funcdef_asm += asm_argname + ":sym/";
+
+						declare_variable(assignment);
+						func_type_wip += delimiter;
+						if (delimiter == ")")
+							break;
+					}
+					next_arg = get_next_non_empty_token();
+					argi++;
+				}
+			}
+			else {
 				func_type_wip += next_arg;
-				
-				if (!parser.is_type(next_arg)) throw std::runtime_error("unrecognized function argument type \"" + next_arg + "\"");
-				argtypes.push_back(parser.is_type(next_arg));
-
-				std::string arg_name = get_next_non_empty_token();
-				if (!parser.is_valid_symbol_name(arg_name)) throw std::runtime_error("invalid argument name \"" + arg_name + "\"");
-
-				std::string delimiter = get_next_non_empty_token();
-				if (delimiter != ")" && delimiter != ",") {
-					throw std::runtime_error("expected \"(\" or \",\" after function parameter");
-				}
-				else {
-					auto v = std::make_shared<varname>("arg" + std::to_string(argi), parser.is_type(next_arg), arg_name);
-					auto e = std::make_shared<expression>(std::vector<expression::token> { v });
-
-					auto asm_argname = get_next_assembly_name() + "_farg";
-					variable_assignment assignment = {
-						.type = parser.is_type(next_arg),
-						.var_name = arg_name,
-						.asm_name = asm_argname,
-						.expr = std::make_pair(std::string("??FIJIWJI"), e)
-					};
-					funcdef_asm += asm_argname + ":sym/";
-
-					declare_variable(assignment);
-					func_type_wip += delimiter;
-					if (delimiter == ")")
-						break;
-				}
-				argi++;
 			}
 
 			if (argi == 0) funcdef_asm += "null";
