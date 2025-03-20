@@ -1,4 +1,4 @@
-function void(){}();
+//function void(){}();
 
 // comment
 i32 j = -2
@@ -21,11 +21,12 @@ class A {
 }
 
 var aConstructor = function A() {
-	//A obj = new A()
-	//obj.a = 3
-	//return obj
+	A obj = A {
+		
+	}
+	return obj;
 }
-A aobject = aConstructor();
+//A aobject = aConstructor();
 
 
 //i32: 32 bit signed int, passed by value
@@ -76,7 +77,7 @@ a *= 4.0;
 i32 c = 4;
 // c += b; // bad: c + b is a double and cannot be assigned into an int
 
-//string jee = "die alone"
+string jee = "die alone"
 
 //i32 p = joe()
 

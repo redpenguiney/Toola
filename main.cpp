@@ -15,13 +15,14 @@ std::string copy(std::string, std::string);
 const std::string COMPILER_TEMP_NAME = "COMPILER_TEMPORARY";
 
 class varname;
+class expression;
 
 struct _type_info;
 using type_info_ = std::shared_ptr<_type_info>;
 
 struct type_field {
 	type_info_ type;
-	
+	std::shared_ptr<expression> default_value;
 };
 
 struct _type_info {
@@ -1828,14 +1829,16 @@ int main(const char** args, int nargs) {
 
 	std::cout << "\nOUTPUT:\n\n" << out;
 
-	std::ofstream input("assembly/test1.mcasm");
+	std::string output_location = "assembly/test2.mcasm";
+
+	std::ofstream input(output_location);
 	assert(input.good());
 	input << out << "\n";
 	input.flush();
 
 	std::cout << "\n\n";
 	
-	std::system("python mcasm/main.py assembly/test1.mcasm");
+	std::system(("python mcasm/main.py " + output_location).c_str());
 
 	return EXIT_SUCCESS;
 }
