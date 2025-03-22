@@ -30,26 +30,28 @@ struct _type_info {
 
 	std::string name;
 
+	bool array;
+
 	std::unordered_map<std::string, type_field> fields = {};
 
-	_type_info(bool b, std::string n, decltype(fields) f): pass_by_reference(b), name(n), fields(f) {
+	_type_info(bool b, std::string n, decltype(fields) f, bool arr): pass_by_reference(b), name(n), array(arr), fields(f) {
 		
 	}
 };
 
 
-type_info_ void_type = std::shared_ptr<_type_info>(new _type_info(false, "void", {}));
-type_info_ null_type = std::shared_ptr<_type_info>(new _type_info(false, "null", {})); // implicitly converts to any reference type
+type_info_ void_type = std::shared_ptr<_type_info>(new _type_info(false, "void", {}, false));
+type_info_ null_type = std::shared_ptr<_type_info>(new _type_info(false, "null", {}, false)); // implicitly converts to any reference type
 
-type_info_ i32_type = std::shared_ptr<_type_info>(new _type_info(false, "i32", {}));
-type_info_ f64_type = std::shared_ptr<_type_info>(new _type_info(false, "f64", {}));
-type_info_ bool_type = std::shared_ptr<_type_info>(new _type_info(false, "bool", {}));
-type_info_ string_type = std::shared_ptr<_type_info>(new _type_info(false, "string", {}));
+type_info_ i32_type = std::shared_ptr<_type_info>(new _type_info(false, "i32", {}, false));
+type_info_ f64_type = std::shared_ptr<_type_info>(new _type_info(false, "f64", {}, false));
+type_info_ bool_type = std::shared_ptr<_type_info>(new _type_info(false, "bool", {}, false));
+type_info_ string_type = std::shared_ptr<_type_info>(new _type_info(false, "string", {}, false));
 
-type_info_ i32_ref_type = std::shared_ptr<_type_info>(new _type_info(true, "i32&", {}));
-type_info_ f64_ref_type = std::shared_ptr<_type_info>(new _type_info(true, "f64&", {}));
-type_info_ bool_ref_type = std::shared_ptr<_type_info>(new _type_info(true, "bool&", {}));
-type_info_ string_ref_type = std::shared_ptr<_type_info>(new _type_info(true, "string&", {}));
+type_info_ i32_ref_type = std::shared_ptr<_type_info>(new _type_info(true, "i32&", {}, false));
+type_info_ f64_ref_type = std::shared_ptr<_type_info>(new _type_info(true, "f64&", {}, false));
+type_info_ bool_ref_type = std::shared_ptr<_type_info>(new _type_info(true, "bool&", {}, false));
+type_info_ string_ref_type = std::shared_ptr<_type_info>(new _type_info(true, "string&", {}, false));
 
 class operand {
 public:
@@ -238,6 +240,8 @@ struct parser_context {
 		return nullptr;
 	}
 		
+	std::unordered_map<std::string, type_info_> type_cache = {};
+
 	type_info_ is_type(std::string symbol) { // returns nullptr if no
 		assert(symbol != "var"); // handle this on ur own bucko
 
@@ -288,7 +292,11 @@ struct parser_context {
 					i++;
 				}
 				
-				return std::shared_ptr<_type_info>(new _type_info(false, symbol, {}));
+				if (type_cache.contains(symbol)) return type_cache[symbol];
+				else {
+					type_cache[symbol] = std::shared_ptr<_type_info>(new _type_info(false, symbol, {}, false));
+					return type_cache[symbol];
+				}
 			}
 
 			return nullptr;
@@ -1191,6 +1199,38 @@ public:
 	}
 };
 
+struct object_creation_field {
+	std::string field_name;
+	std::shared_ptr<expression> field_value;
+};
+
+class object_creation : public operand {
+public:
+	type_info_ object_type;
+	std::vector<object_creation_field> fields; // doesn't include defaulted ones
+
+	object_creation(type_info_ t, std::vector<object_creation_field> f) : object_type(t), fields(f) {}
+
+	std::pair<std::string, std::string> retrieve_asm_value() {
+		std::string code = "";
+		std::string varname = get_next_assembly_name() + "_obj";
+
+		code += "\ndvar " + varname + " arr:null; construct new " + object_type->name;
+		auto final_fields = fields;
+		for (auto& [name, field] : object_type->fields) {
+			for (auto& f : fields) {
+				if (f.field_name == name) {
+					goto done;
+				}
+			}
+			final_fields += object_creation_field{ .field_name = name, .field_value = field.default_value };
+			done:;
+		}
+
+		return std::make_pair(code, varname);
+	}
+};
+
 static std::string get_next_non_empty_token(bool allowEmpty = false);
 static void process_code_body();
 static std::pair<std::string, std::shared_ptr<expression>> get_next_expression();
@@ -1272,6 +1312,12 @@ static std::string get_next_non_empty_token(bool allowEof) {
 		}
 
 	}
+}
+
+static std::string inspect_next_non_empty_token() {
+	std::string s = get_next_non_empty_token();
+	return_token(" " + s);
+	return s;
 }
 
 static void declare_variable(variable_assignment var) {
@@ -1503,6 +1549,46 @@ static std::pair<std::string, std::shared_ptr<expression>> get_next_expression()
 				//expression_parse.operands.push_back(liter);// TODO: how to handle dot operator?
 			}
 		}
+		else if (parser.is_type(next) && inspect_next_non_empty_token() == "{") { // construct class object or array type
+
+			auto type = parser.is_type(next);
+
+			if (get_next_non_empty_token() != "{") throw std::runtime_error("expected \"{\" after typename to construct array or class object");
+
+			if (type->array) {
+				assert(false);
+				expString += "<array_object>"; // TODO 
+			}
+			else {
+				std::vector<object_creation_field> fields{};
+
+				while (true) {
+					std::string field_name = get_next_non_empty_token();
+
+					if (get_next_non_empty_token() != "=") throw std::runtime_error("expected \"=\" after field name");
+
+					auto expr = get_next_expression();
+					assert(expr.second != nullptr);
+
+					fields.push_back(object_creation_field{ .field_name = field_name, .field_value = expr.second });
+
+					auto delimiter = get_next_non_empty_token();
+					if (delimiter == "}") {
+						break;
+					}
+					else if (delimiter != ",") throw std::runtime_error("expected \",\" or \"}\" after field assignment expression");
+
+				}
+				expression_parse->tokens.push_back(std::make_shared<object_creation>(type, fields));
+				expString += "<class_pbject>"; // TODO 
+			}
+
+			if (last.back() == 1) throw std::runtime_error("symbol (created object or array) cannot follow another symbol");
+			unary.back() = false;
+			last.back() = 1;
+			
+			
+		}
 		else {
 			// they gave something that doesn't go in the expression; if the expression is done that's fine, if it's not then we error
 			if (groupingSymbolStack.empty() && !unary.back() && last.back() == 1) {
@@ -1617,8 +1703,8 @@ static void process_code_body() {
 
 			parser.scopeStack.back().known_symbols[class_name] = symbol_type::type;
 			parser.taskStack.push_back(parsing_task_info{ .task = parsing_task::class_body });
-			auto classtype = type_info_(new _type_info(false, class_name, {}));
-			auto classreftype = type_info_(new _type_info(true, class_name, {}));
+			auto classtype = type_info_(new _type_info(false, class_name, {}, false));
+			auto classreftype = type_info_(new _type_info(true, class_name, {}, false));
 			parser.scopeStack.back().types[class_name] = classtype;
 			parser.scopeStack.back().types[class_name + "&"] = classreftype;
 

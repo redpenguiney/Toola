@@ -22,6 +22,8 @@ class A {
 
 var aConstructor = function A() {
 	A obj = A {
+		b = "",
+		a = 1.0
 		
 	}
 	return obj;
