@@ -14,6 +14,7 @@ std::string copy(std::string, std::string);
 
 const std::string COMPILER_TEMP_NAME = "COMPILER_TEMPORARY";
 
+class operand;
 class varname;
 class expression;
 
@@ -22,7 +23,8 @@ using type_info_ = std::shared_ptr<_type_info>;
 
 struct type_field {
 	type_info_ type;
-	std::shared_ptr<expression> default_value;
+	std::shared_ptr<operand> default_value;
+	int index = -1;
 };
 
 struct _type_info {
@@ -35,7 +37,10 @@ struct _type_info {
 	std::unordered_map<std::string, type_field> fields = {};
 
 	_type_info(bool b, std::string n, decltype(fields) f, bool arr): pass_by_reference(b), name(n), array(arr), fields(f) {
-		
+		int i = 0;
+		for (auto& [ne, fd] : fields) {
+			fd.index = i++;
+		}
 	}
 };
 
@@ -1201,7 +1206,7 @@ public:
 
 struct object_creation_field {
 	std::string field_name;
-	std::shared_ptr<expression> field_value;
+	std::shared_ptr<operand> field_value;
 };
 
 class object_creation : public operand {
@@ -1223,12 +1228,55 @@ public:
 					goto done;
 				}
 			}
-			final_fields += object_creation_field{ .field_name = name, .field_value = field.default_value };
+			final_fields.push_back(object_creation_field{ .field_name = name, .field_value = field.default_value });
 			done:;
+		}
+
+		for (auto& f : final_fields) {
+			if (!object_type->fields.contains(f.field_name)) throw std::runtime_error("type \"" + object_type->name + "\" does not have a field \"" + f.field_name + "\"");
+		}
+
+		assert(final_fields.size() == object_type->fields.size());
+		std::vector<std::string> assignmentLocations;
+		assignmentLocations.resize(final_fields.size());
+		for (auto& f : final_fields) {
+			auto targetType = object_type->fields.at(f.field_name).type;
+			if (targetType->pass_by_reference) {
+				if (f.field_value->get_type() != targetType && f.field_value->get_type() != null_type) { // TODO: some references can be casted into another (like null or with inheritance)
+					throw std::runtime_error("incompatible types in field assignment");
+				}
+				auto [ret_value_asm, value_loc] = f.field_value->retrieve_asm_value();
+				assignmentLocations[object_type->fields.at(f.field_name).index] = value_loc;
+				code += ret_value_asm;
+			}
+			else {
+				auto [ret_value_asm, value_loc] = f.field_value->retrieve_asm_value_copy();
+
+				auto conv_code = implicit_convert_to_type(value_loc, f.field_value->get_type(), targetType);
+
+				if (!conv_code.has_value()) {
+					throw std::runtime_error("incompatible operands for assignment");
+				}
+				ret_value_asm += *conv_code;
+				assignmentLocations[object_type->fields.at(f.field_name).index] = value_loc;
+				code += ret_value_asm;
+			}	
+		}
+
+		for (int i = 0; i < assignmentLocations.size(); i++) {
+			code += "\naarr " + varname + " sym:" + assignmentLocations[i];
 		}
 
 		return std::make_pair(code, varname);
 	}
+
+	std::pair<std::string, std::string> retrieve_asm_value_copy() {
+		return retrieve_asm_value();
+	}
+
+	type_info_ get_type() { return object_type; }
+
+	~object_creation() = default;
 };
 
 static std::string get_next_non_empty_token(bool allowEmpty = false);
@@ -1455,7 +1503,7 @@ static std::pair<std::string, std::shared_ptr<expression>> get_next_expression()
 			std::vector<type_info_> argtypes;
 			std::string func_type_wip = ret_type + "(";
 
-			parser.scopeStack.push_back(scope{ .type = scope_type::function, .should_return = ret_type == "void"});
+			parser.scopeStack.push_back(scope{ .type = scope_type::function, .should_return = true});
 			parser.taskStack.push_back(parsing_task_info{ .task = parsing_task::code_body, .line_number = tokenizer.current_line_number });
 
 			if (!parser.is_type(ret_type)) throw std::runtime_error("unrecognized function return type \"" + ret_type + "\"");
@@ -1549,7 +1597,7 @@ static std::pair<std::string, std::shared_ptr<expression>> get_next_expression()
 				//expression_parse.operands.push_back(liter);// TODO: how to handle dot operator?
 			}
 		}
-		else if (parser.is_type(next) && inspect_next_non_empty_token() == "{") { // construct class object or array type
+		else if ((next != "var" && parser.is_type(next)) && inspect_next_non_empty_token() == "{") { // construct class object or array type
 
 			auto type = parser.is_type(next);
 
@@ -1622,12 +1670,12 @@ static void process_class_body(type_info_ class_type, type_info_ class_ref_type)
 		if (current_token == "}") { // end class body
 			parser.taskStack.pop_back();
 		}
-		else if (current_token == "var" || parser.is_type(current_token)) { // then we're defining a variable now.
+		else if (current_token == "var" || parser.is_type(current_token)) { // then we're defining a class field now.
 
 			// check if we're defining a function type
 			std::string isParen = get_next_non_empty_token();
 			if (isParen == "(") {
-
+				if (current_token == "var") throw std::runtime_error("function type cannot have \"var\" as a return type");
 				current_token += "(";
 				// then this is hopefully a function type
 				while (true) {
@@ -1654,28 +1702,61 @@ static void process_class_body(type_info_ class_type, type_info_ class_ref_type)
 					}
 				}
 
-				assert(parser.is_type(current_token));
+				if (!parser.is_type(current_token)) throw std::runtime_error("invalid function signature for field type");
 			}
+
+			auto field_type = current_token == "var" ? nullptr : parser.is_type(current_token);
 
 			std::string var_name = isParen == "(" ? get_next_non_empty_token() : isParen;
 			if (var_name.empty() || !parser.is_valid_symbol_name(var_name)) // TODO: naming should be more lax here
 				throw std::runtime_error("invalid variable name");
 
 
+			std::shared_ptr<operand> default_value_expression;
+
 			auto maybeEquals = get_next_non_empty_token();
 			if (maybeEquals != "=") { // then that's fine; we'll give our own default value
 				return_token(maybeEquals);
+				if (current_token == "var") // then that's not okay because we don't know the type of the field
+					throw std::runtime_error("cannot deduce field type without default value expression");
+
+				if (field_type->pass_by_reference) {
+					default_value_expression = std::make_shared<literal>(null_type, "null");
+				}
+				else if (field_type == i32_type) {
+					default_value_expression = std::make_shared<literal>(i32_type, "0");
+				}
+				else if (field_type == bool_type) {
+					default_value_expression = std::make_shared<literal>(bool_type, "false");
+				}
+				else if (field_type == f64_type) {
+					default_value_expression = std::make_shared<literal>(i32_type, "0.0");
+				}
+				else if (field_type == string_type) {
+					default_value_expression = std::make_shared<literal>(string_type, "");
+				}
+				else {
+					throw std::runtime_error("cannot automatically create default value for field \"" + var_name + "\"");
+				}
 			}
 			else {
-				auto default_value_expression = get_next_expression();
+				default_value_expression = get_next_expression().second;
+				if (current_token == "var")
+					field_type = default_value_expression->get_type();
+
 			}
+
+			assert(field_type);
+
+			int i = class_type->fields.size();
+			class_type->fields[var_name] = type_field{ .type = field_type, .default_value = default_value_expression, .index = i };
 		}
 		else if (current_token == ";") {} // ok whatever
 		else {
 			throw std::runtime_error("expected member declaration or \"}\", got \"" + current_token + "\".");
 		}
 
-
+		
 	}
 	std::cout << "exiting class block\n";
 }
@@ -1711,9 +1792,13 @@ static void process_code_body() {
 			process_class_body(classtype, classreftype);
 		}
 		else if (current_token == "return") {
-			if (parser.scopeStack.back().should_return) {
+			if (parser.scopeStack.back().should_return) { // TODO: wrong, need to go back until you find one you can return from
 				if (parser.scopeStack.back().return_type != void_type) {
-					auto return_expression = get_next_expression();
+					auto return_expression = get_next_expression().second;
+					auto expr_type = return_expression->get_type();
+
+
+					
 					// TODO: if return type is a reference type, return_expression must be an rvalue
 					auto [asmt, varname] = parser.scopeStack.back().return_type->pass_by_reference ? return_expression.second->retrieve_asm_value() : return_expression.second->retrieve_asm_value_copy();  
 					out += asmt;
@@ -1721,6 +1806,9 @@ static void process_code_body() {
 				}
 				
 				out += "\njmp function_end_lbl";
+			}
+			else {
+				throw std::runtime_error("cannot return here");
 			}
 		}
 		else if (current_token == "while") {

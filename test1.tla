@@ -28,7 +28,7 @@ var aConstructor = function A() {
 	}
 	return obj;
 }
-//A aobject = aConstructor();
+A aobject = aConstructor();
 
 
 //i32: 32 bit signed int, passed by value
